@@ -39,7 +39,10 @@ concurrency:
 permissions:
   contents: read
   security-events: write
-  actions: read
+  # write, not read: the converted suites dispatch argus-run.yml. A called
+  # workflow cannot request more than its caller grants, and asking for more
+  # fails the whole run at startup with no jobs and no annotation.
+  actions: write
   packages: read
   pull-requests: write
   checks: write
@@ -53,6 +56,40 @@ permissions:
 # ============================================================================
 
 jobs:
+  # --------------------------------------------------------------------------
+  # Cancel argus-run children orphaned by a superseded parent.
+  #
+  # A dispatched run is independent: cancelling or superseding the run that
+  # dispatched it leaves it queued. With cancel-in-progress on this workflow,
+  # every push during a run strands that run's children, and they crowd the
+  # queue ahead of the live ones -- 20 orphans accumulated over four pushes
+  # while proving this out.
+  #
+  # Matches on the marker each child carries in its run-name, keeping only
+  # those belonging to THIS run.
+  # --------------------------------------------------------------------------
+  reap-orphans:
+    name: "Reap orphaned argus runs"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          N=0
+          for WF in argus-run.yml argus-hardening-run.yml argus-iac-run.yml argus-config-run.yml; do
+          for r in $(gh run list --workflow="$WF" --limit 100 \
+                     --json databaseId,status,displayTitle \
+                     --jq ".[] | select(.status==\"queued\" or .status==\"in_progress\")
+                           | select(.displayTitle | contains(\"-${GITHUB_RUN_ID}-\") | not)
+                           | .databaseId" 2>/dev/null); do
+            gh run cancel "$r" >/dev/null 2>&1 && N=$((N+1))
+          done
+          done
+          echo "cancelled $N orphaned argus run(s) from superseded parents across all dispatch targets"
+
   # ==========================================================================
   # Unit Tests (U1-U5)
   # ==========================================================================
@@ -79,6 +116,7 @@ jobs:
   remote-tests:
     name: "Remote Mode Tests"
     if: inputs.scope == 'all' || inputs.scope == 'remote' || github.event_name == 'schedule' || github.event_name == 'push'
+    needs: reap-orphans
     uses: ./.github/workflows/test-remote.yml
 
   # ==========================================================================
@@ -87,6 +125,7 @@ jobs:
   discover-tests:
     name: "Discover Mode Tests"
     if: inputs.scope == 'all' || inputs.scope == 'discover' || github.event_name == 'schedule' || github.event_name == 'push'
+    needs: reap-orphans
     uses: ./.github/workflows/test-discover.yml
 
   # ==========================================================================
@@ -95,6 +134,7 @@ jobs:
   combination-tests:
     name: "Combination Tests"
     if: inputs.scope == 'all' || inputs.scope == 'combination' || github.event_name == 'schedule' || github.event_name == 'push'
+    needs: reap-orphans
     uses: ./.github/workflows/test-combination.yml
 
   # ==========================================================================
@@ -103,6 +143,7 @@ jobs:
   edge-tests:
     name: "Edge & Adversarial Tests"
     if: inputs.scope == 'all' || inputs.scope == 'edge' || github.event_name == 'schedule' || github.event_name == 'push'
+    needs: reap-orphans
     uses: ./.github/workflows/test-edge.yml
 
   # ==========================================================================
@@ -111,6 +152,7 @@ jobs:
   workflow-tests:
     name: "Top-level Workflow Tests"
     if: inputs.scope == 'all' || inputs.scope == 'workflows' || github.event_name == 'schedule' || github.event_name == 'push'
+    needs: reap-orphans
     uses: ./.github/workflows/test-workflows.yml
 
   # ==========================================================================
@@ -135,14 +177,22 @@ jobs:
   # ==========================================================================
   i1-infrastructure-scan:
     name: "I1: infrastructure-scan regression"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: reap-orphans
     if: inputs.scope == 'all' || inputs.scope == 'regression' || github.event_name == 'schedule' || github.event_name == 'push'
-    uses: huntridge-labs/argus/.github/workflows/infrastructure-scan.yml@main
-    with:
-      # Was the default iac_path of "infrastructure", which does not exist here,
-      # so I1 passed by scanning nothing. tests/iac holds deliberately insecure
-      # Terraform for the scanners to actually parse.
-      iac_path: tests/iac
-      fail_on_severity: none
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: ./.github/actions/argus-dispatch
+        with:
+          test_id: I1
+          expect: success
+          workflow: argus-iac-run.yml
+          # iac_path was the default "infrastructure", which does not exist here,
+          # so I1 passed by scanning nothing. tests/iac holds deliberately
+          # insecure Terraform for the scanners to actually parse.
+          inputs_json: '{"iac_path":"tests/iac","fail_on_severity":"none"}'
 
   # ==========================================================================
   # I2: No hardcoded URLs (inline regression check)
@@ -216,10 +266,19 @@ jobs:
   # ==========================================================================
   i3-config-scan:
     name: "I3: config-driven scan"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: reap-orphans
     if: inputs.scope == 'all' || inputs.scope == 'regression' || github.event_name == 'schedule' || github.event_name == 'push'
-    uses: huntridge-labs/argus/.github/workflows/container-scan-from-config.yml@main
-    with:
-      config_file: tests/configs/single-public.yml
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: ./.github/actions/argus-dispatch
+        with:
+          test_id: I3
+          expect: success
+          workflow: argus-config-run.yml
+          inputs_json: '{"config_file":"tests/configs/single-public.yml"}'
 
   # ==========================================================================
   # Final Summary
