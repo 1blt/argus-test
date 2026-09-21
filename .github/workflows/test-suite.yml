@@ -995,6 +995,43 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/generate-cleanliness-page.sh
 
+      # Pages replaces the WHOLE site on every deployment, so a branch that
+      # publishes must carry every other branch's pages with it or it deletes
+      # them. This step was lost in a0a3871 when the hub was removed, and the
+      # next branch to publish took the entire site down to itself -- main,
+      # dev and the root index all 404. Restored, and it runs BEFORE the root
+      # index so discovery can see the branches it just pulled back.
+      - name: Preserve every other branch's site
+        run: |
+          set -uo pipefail
+          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
+          MINE="${{ env.branch_slug }}"
+          curl -sSf "$SITE/branches.json" -o /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
+          jq empty /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
+          if [ "$(jq 'length' /tmp/branches.json)" = "0" ]; then
+            echo '[{"slug":"main","name":"main"},{"slug":"dev","name":"dev"}]' > /tmp/branches.json
+          fi
+          KEPT=0
+          for SLUG in $(jq -r '.[].slug' /tmp/branches.json); do
+            [ "$SLUG" = "$MINE" ] && continue
+            mkdir -p "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness"
+            GOT=0
+            for f in index.html history.json cleanliness.json favicon.png \
+                     tests/index.html code-cleanliness/index.html; do
+              curl -sSf "$SITE/$SLUG/$f" -o "_site/$SLUG/$f" 2>/dev/null && GOT=$((GOT + 1))
+            done
+            rmdir "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness" 2>/dev/null || true
+            if [ "$GOT" -eq 0 ]; then
+              rm -rf "_site/$SLUG"
+              echo "  $SLUG: nothing live to preserve"
+            else
+              touch "_site/$SLUG/.nojekyll"
+              KEPT=$((KEPT + 1))
+              echo "  $SLUG: kept $GOT file(s)"
+            fi
+          done
+          echo "Preserved $KEPT other branch(es)"
+
       # /<branch>/ is a REDIRECT, not a page. It used to serve a hub that
       # restated the figures already on the index card and cost a click to
       # reach the page you wanted. The index carries those figures per branch
@@ -1032,6 +1069,14 @@ jobs:
       # Was an inline heredoc listing branch names against two hardcoded
       # sentences and no figures at all -- the top of the site said less than
       # any page beneath it.
+      # Before the root index, not after: the root discovers branches by
+      # looking for directories holding an index.html, and the staging dir
+      # sitting in _site was both noise and -- via the loop's exit status --
+      # fatal.
+      - name: Drop the liveness staging directory
+        if: always()
+        run: rm -rf _site/liveness
+
       - name: Write the root index
         env:
           SITE_DIR: _site
@@ -1042,11 +1087,6 @@ jobs:
       # reviewer can open the board for a branch that cannot publish. This also
       # means generate-dashboard.sh is exercised on every run rather than only
       # after a merge to main.
-      # Scratch inputs for the generator, not part of the published site.
-      - name: Drop the liveness staging directory
-        if: always()
-        run: rm -rf _site/liveness
-
       - name: Upload rendered dashboard
         if: always()
         uses: actions/upload-artifact@v4

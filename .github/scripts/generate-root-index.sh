@@ -39,9 +39,14 @@ FALLBACK="${FALLBACK:-main}"
 # Every directory that actually holds a rendered page. Discovered rather than
 # listed: the suite now runs on main, dev and any feat/** or fix/** branch, so
 # a hardcoded pair would silently omit whichever branch someone is working on.
+# The trailing `|| true` is load-bearing. Under `set -e`, a for-loop takes the
+# exit status of its LAST iteration: when the final directory had no
+# index.html -- the staging dir sorted last -- the loop returned 1, the command
+# substitution returned 1, the assignment failed and the whole script died.
+# That is what took the published site down to a single branch.
 BRANCHES="${BRANCHES:-$(cd "$SITE_DIR" && for d in */; do
-  [ -f "${d}index.html" ] && printf '%s ' "${d%/}"
-done)}"
+  if [ -f "${d}index.html" ]; then printf '%s ' "${d%/}"; fi
+done || true)}"
 
 touch "$SITE_DIR/.nojekyll"
 
