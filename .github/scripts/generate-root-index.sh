@@ -71,6 +71,9 @@ for b in $BRANCHES; do
   CLEAN='null'
   CF="$SITE_DIR/$b/cleanliness.json"
   if [ -f "$CF" ] && jq empty "$CF" 2>/dev/null; then
+    # The per-branch specifics, not just the headline numbers: a card needs
+    # something true of THIS branch on its detail line, and "reported, never
+    # gated" was the same sentence on every card in every run.
     CLEAN=$(jq -c '{
       dup:    (.targets.suite.duplication.percent // null),
       tuples: (if .targets.suite.tuple_dupes
@@ -78,7 +81,13 @@ for b in $BRANCHES; do
                    + (.targets.suite.tuple_dupes.invocation_rows // 0))
                else null end),
       cog:    (.targets.argus.cognitive.worst // null),
-      argusDup: (.targets.argus.duplication.percent // null)
+      argusDup: (.targets.argus.duplication.percent // null),
+      worstUnit: (.targets.suite.cognitive.worst_at // null),
+      worstScore: (.targets.suite.cognitive.worst // null),
+      overCount: (.targets.suite.cognitive.over_threshold // null),
+      topCloneLines: (.targets.suite.duplication.groups[0].lines // null),
+      topCloneFile:  (.targets.suite.duplication.groups[0].a.file // null),
+      cloneGroups:   (.targets.suite.duplication.clones // null)
     }' "$CF")
   fi
   HAS_TESTS=false
@@ -264,9 +273,24 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
               (m.tuples ? 'warn' : '')) +
           fig(m.cog != null ? m.cog : '&mdash;', 'argus cognitive, worst') +
           '</div>';
-        // Stated on every card because it is the thing people forget: none of
-        // these numbers can fail a build.
-        note = '<div class="bline">Reported, never gated.</div>';
+        // The worst thing on THIS branch, named. "Reported, never gated" was
+        // the same sentence on every card in every run -- true, and therefore
+        // useless as a per-branch detail line. The fact that nothing here
+        // gates is said once, in the footer, where a global fact belongs.
+        var bits = [];
+        if (m.worstUnit && m.worstScore != null) {
+          // Basename only: the card is a summary and the full path is on the
+          // page it links to, where the reader can also click it.
+          var wu = String(m.worstUnit).split('/').pop();
+          bits.push('worst unit <span class="mono">' + esc(wu) + '</span> (' +
+                    esc(m.worstScore) + ')' +
+                    (m.overCount ? ', ' + esc(m.overCount) + ' over' : ''));
+        }
+        if (m.topCloneLines && m.topCloneFile) {
+          bits.push('largest clone ' + esc(m.topCloneLines) + ' lines in <span class="mono">' +
+                    esc(String(m.topCloneFile).split('/').pop()) + '</span>');
+        }
+        note = bits.length ? '<div class="bline">' + bits.join(' &middot; ') + '</div>' : '';
       }
 
     } else {
