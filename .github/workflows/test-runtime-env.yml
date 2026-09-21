@@ -271,6 +271,17 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet ./argus-checkout
+      # N3 and N5 install a scanner; N4 did not, so argus had no binary to
+      # dispatch to, produced no output at all, and never reached the pull
+      # path -- which the escape hatch then reported as "could not reach its
+      # subject". The missing precondition was the whole cause.
+      - name: Install trivy
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/scanbin"
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b "$HOME/scanbin" v0.74.0
+          echo "$HOME/scanbin" >> "$GITHUB_PATH"
 
       - name: No pull retry may hardcode linux/amd64
         id: assert
@@ -310,10 +321,35 @@ jobs:
           echo "--- argus output (tail) ---"
           tail -30 n4.log || true
 
+          # If the CLI still did not reach the pull path, call the pull
+          # function itself. Driving it through a whole scan adds dispatch,
+          # config and sub-scanner selection as failure modes without adding
+          # any assurance about THIS question, which is only ever "which
+          # platform did the retry ask for". Two attempts to reach it through
+          # the CLI produced a skip; the function is the subject, so call it.
           if ! grep -q "pull" "$PULL_LOG"; then
-            echo "::warning title=N4 could not reach its subject::No runtime pull was attempted even with a sub-scanner that needs a local image, so there was no retry to inspect. Recorded as SKIP -- no assurance -- rather than pass, because a test that never reached the behaviour it names has not verified it."
+            echo "CLI path attempted no pull; driving the pull function directly."
+            : > "$PULL_LOG"
+            set +e
+            # The exit code is not the signal: the probe reports NO_PULL_FUNCTION
+            # in its output, and what matters is whether the stub logged a pull.
+            python3 .github/scripts/n4-probe-pull.py > n4-direct.log 2>&1 || true
+            set -e
+            cat n4-direct.log || true
+            if grep -q "NO_PULL_FUNCTION" n4-direct.log 2>/dev/null; then
+              echo "::warning title=N4 could not reach its subject::argus at this ref exposes no pull_image entry point under any known name, so there is no retry to inspect."
+              echo "verdict=skip" >> "$GITHUB_OUTPUT"
+              echo "reason=argus at this ref exposes no pull_image function under any name this test knows, so the retry platform could not be observed." >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "--- pull invocations (direct) ---"
+            cat "$PULL_LOG" || true
+          fi
+
+          if ! grep -q "pull" "$PULL_LOG"; then
+            echo "::warning title=N4 could not reach its subject::Neither the CLI nor a direct call produced a runtime pull, so there was no retry to inspect."
             echo "verdict=skip" >> "$GITHUB_OUTPUT"
-            echo "reason=No runtime pull was attempted even with a sub-scanner that needs a local image, so there was no retry to inspect." >> "$GITHUB_OUTPUT"
+            echo "reason=Neither a full scan nor a direct call to the pull function produced a runtime pull, so the retry platform could not be observed." >> "$GITHUB_OUTPUT"
             exit 0
           fi
 

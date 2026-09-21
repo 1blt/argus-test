@@ -79,6 +79,49 @@ jobs:
           if-no-files-found: error
 
   # --------------------------------------------------------------------------
+  # Does the ref under test declare the workflow_call outputs D5 asserts on?
+  #
+  # D5 used to be gated on `argus_ref != 'main'`, which used a branch NAME as a
+  # proxy for a CAPABILITY. It was right only by coincidence: correct while the
+  # outputs existed on exactly one branch, silently wrong the moment a second
+  # branch carried them, and it would have kept D5 skipped after PR #427 merged
+  # until somebody remembered to delete the condition.
+  #
+  # Asking the ref directly is the same cost and cannot drift. If the probe
+  # cannot reach the ref at all it reports false, so D5 skips with a stated
+  # reason rather than failing on an assertion it could never evaluate.
+  # --------------------------------------------------------------------------
+  outputs-capability:
+    name: "Does argus@ref declare the scan outputs?"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      declared: ${{ steps.probe.outputs.declared }}
+    steps:
+      - id: probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARGUS_REF: ${{ inputs.argus_ref || 'main' }}
+        run: |
+          set -uo pipefail
+          BODY=$(gh api "repos/huntridge-labs/argus/contents/.github/workflows/container-scan.yml?ref=${ARGUS_REF}" \
+                   --jq '.content' 2>/dev/null | base64 -d 2>/dev/null)
+          if [ -z "$BODY" ]; then
+            echo "declared=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not read container-scan.yml at ${ARGUS_REF}; treating the outputs as absent."
+            exit 0
+          fi
+          # The outputs block is what D5 reads. images_scanned is the one that
+          # separates "clean" from "never ran", so it stands for the set.
+          if grep -q 'images_scanned:' <<<"$BODY" && grep -q 'overall_status:' <<<"$BODY"; then
+            echo "declared=true" >> "$GITHUB_OUTPUT"
+            echo "argus@${ARGUS_REF} declares the container-scan outputs; D5 will run."
+          else
+            echo "declared=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::argus@${ARGUS_REF} does not declare images_scanned/overall_status, so D5 is skipped."
+          fi
+
+  # --------------------------------------------------------------------------
   # D5: the MIXED-incomplete discover run.
   #
   # Two Dockerfiles under tests/dockerfiles/mixed: one builds and scans, one
@@ -102,15 +145,18 @@ jobs:
   # The failure is induced, not mocked: the base image is withdrawn and the
   # registry host does not resolve. See tests/dockerfiles/mixed/fails/Dockerfile.
   #
-  # Skipped on refs without the outputs. That reads as "no assurance" on the
-  # dashboard rather than as a pass, which is the honest answer for a ref where
-  # the feature does not exist.
+  # Skipped on refs that do not declare the outputs -- decided by asking the
+  # ref, not by matching its name. That reads as "no assurance" on the board
+  # rather than as a pass, which is the honest answer for a ref where the
+  # feature does not exist, and it starts running by itself once the ref has
+  # it.
   # --------------------------------------------------------------------------
   d5-mixed-incomplete:
     name: "D5: mixed-incomplete discover run"
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    if: inputs.argus_ref != 'main'
+    needs: outputs-capability
+    if: needs.outputs-capability.outputs.declared == 'true'
     steps:
       - uses: actions/checkout@v4
       - id: t
@@ -150,7 +196,7 @@ jobs:
   validate-results:
     name: "Validate Discover Test Results"
     runs-on: ubuntu-latest
-    needs: [discover, d5-mixed-incomplete]
+    needs: [discover, d5-mixed-incomplete, outputs-capability]
     if: always()
     outputs:
       results: ${{ steps.collect.outputs.results }}
@@ -177,7 +223,7 @@ jobs:
           # A missing artifact must surface as "skip" -- no assurance -- rather
           # than vanishing and leaving the board reporting four tests as all.
           if [ ! -f ./results/result-D5.json ]; then
-            echo '{"id":"D5","status":"skip","child":"","reason":"Asserts container-scan.yml workflow_call outputs, which only refs carrying argus PR #427 declare. This run used a ref without them."}' > ./results/result-D5.json
+            echo '{"id":"D5","status":"skip","child":"","reason":"argus at the ref under test does not declare the container-scan.yml workflow_call outputs (images_scanned, overall_status) that this test asserts on. It will run by itself on a ref that does."}' > ./results/result-D5.json
             echo "D5 produced no artifact; recorded as skip"
           fi
           RESULTS=$(jq -s -c --slurpfile d /tmp/detail.json '
