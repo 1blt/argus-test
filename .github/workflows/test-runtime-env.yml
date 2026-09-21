@@ -238,13 +238,27 @@ jobs:
   #
   # Asserted on the CHOICE, not just the outcome: a scan can succeed for
   # reasons unrelated to the retry, and "which platform did it ask for" is the
-  # thing that regressed. argus/core/engine.py still carried the hardcoded
-  # fallback at 4e2b481a (blocker 4), so this is expected red until that lands.
+  # thing that regressed.
+  #
+  # THE FIRST VERSION OF THIS TEST PASSED VACUOUSLY, which is worth recording
+  # because it is the suite's own failure mode. It ran `--scanners trivy`, and
+  # trivy reads a remote registry directly without ever asking the runtime to
+  # pull -- so no pull was attempted, nothing was asserted, and the job went
+  # green. Two changes:
+  #
+  #   1. `exposure` is requested, because it needs a real local image and
+  #      therefore forces the pull path this test is about;
+  #   2. if no pull is attempted anyway, the result is SKIP, not pass. A test
+  #      that could not reach its subject has produced no assurance, and the
+  #      dashboard grades skip as exactly that. Reporting pass would be the
+  #      same lie the suite exists to catch.
   # --------------------------------------------------------------------------
   n4-retry-platform:
     name: "N4: retry names a published platform"
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      verdict: ${{ steps.assert.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -258,6 +272,7 @@ jobs:
       - run: pip install --quiet ./argus-checkout
 
       - name: No pull retry may hardcode linux/amd64
+        id: assert
         run: |
           set -uo pipefail
 
@@ -279,10 +294,14 @@ jobs:
           export PULL_LOG="$PWD/pull-argv.log"
           : > "$PULL_LOG"
 
+          # `exposure` needs the image locally, so it drives the runtime pull
+          # path. trivy alone reads the registry directly and never pulls,
+          # which is how the first version of this test passed without
+          # asserting anything.
           set +e
           python -m argus scan container \
             --image arm64v8/alpine:3.18 \
-            --scanners trivy --severity-threshold none > n4.log 2>&1
+            --scanners exposure,trivy --severity-threshold none > n4.log 2>&1
           set -e
 
           echo "--- pull invocations ---"
@@ -291,7 +310,8 @@ jobs:
           tail -30 n4.log || true
 
           if ! grep -q "pull" "$PULL_LOG"; then
-            echo "::notice::No runtime pull was attempted (remote scanners can read the registry directly). Nothing to assert about a retry platform."
+            echo "::warning title=N4 could not reach its subject::No runtime pull was attempted even with a sub-scanner that needs a local image, so there was no retry to inspect. Recorded as SKIP -- no assurance -- rather than pass, because a test that never reached the behaviour it names has not verified it."
+            echo "verdict=skip" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -300,9 +320,11 @@ jobs:
           # rather than read.
           if grep -q -- "--platform linux/amd64" "$PULL_LOG"; then
             echo "::error title=N4::A pull retry asked for --platform linux/amd64 against arm64v8/alpine:3.18, which publishes only linux/arm64. The platform was hardcoded, not read from the manifest: the retry cannot succeed and costs a second full pull. argus/core/engine.py still contained this fallback at 4e2b481a."
+            echo "verdict=FAIL" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          echo "PASS N4: no retry hardcoded linux/amd64"
+          echo "PASS N4: a pull was attempted and no retry hardcoded linux/amd64"
+          echo "verdict=pass" >> "$GITHUB_OUTPUT"
 
   # --------------------------------------------------------------------------
   # N5: a locally-built, never-pushed image under an explicit platform pin.
@@ -406,6 +428,7 @@ jobs:
           N2_RAW: ${{ needs.n1-n2-daemonless.outputs.n2 }}
           N3: ${{ needs.n3-unscannable-exit-code.result }}
           N4: ${{ needs.n4-retry-platform.result }}
+          N4_RAW: ${{ needs.n4-retry-platform.outputs.verdict }}
           N5: ${{ needs.n5-local-image-platform-pin.result }}
         run: |
           to_status() {
@@ -418,10 +441,14 @@ jobs:
             esac
           }
           half() {
-            # $1 = the step's own verdict, $2 = the enclosing job's result
+            # $1 = the step's own verdict, $2 = the enclosing job's result.
+            # A step that reports 'skip' could not reach its subject; that is
+            # no assurance, and the dashboard grades it as such. It must not be
+            # flattened into the job's 'success'.
             case "$1" in
               pass) echo "pass" ;;
               FAIL) echo "FAIL" ;;
+              skip) echo "skip" ;;
               *)    to_status "$2" ;;
             esac
           }
@@ -429,7 +456,7 @@ jobs:
             --arg n1 "$(half "$N1_RAW" "$PAIR_RESULT")" \
             --arg n2 "$(half "$N2_RAW" "$PAIR_RESULT")" \
             --arg n3 "$(to_status "$N3")" \
-            --arg n4 "$(to_status "$N4")" \
+            --arg n4 "$(half "$N4_RAW" "$N4")" \
             --arg n5 "$(to_status "$N5")" \
             '[
               {"id":"N1","name":"daemonless default scan","detail":"Does a default container scan still exit 0 on a runner with trivy and grype but no container runtime, naming the sub-scanners that could not run?","status":$n1},
