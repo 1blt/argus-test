@@ -29,6 +29,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$SCRIPT_DIR/site-nav.sh"
 OUT_DIR="${OUT_DIR:?OUT_DIR not set}"
 mkdir -p "$OUT_DIR"
 
@@ -116,6 +117,7 @@ cat > "$OUT_DIR/index.html" << 'HTMLEOF'
 <link rel="apple-touch-icon" href="favicon.png">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,wght@0,300;0,400;0,600;0,700&display=swap');
+__NAV_CSS__
 :root {
   --bg:#ffffff; --surface:#ffffff; --surface2:#f8f9fa;
   --fg:#1a1a1a; --fg2:#55595c; --fg3:#919aa1;
@@ -201,6 +203,7 @@ footer { margin-top:40px; padding-top:18px; border-top:1px solid var(--border);
 </head>
 <body>
 <div class="wrap">
+  <div class="nav" id="nav"></div>
   <h1><img class="eye" src="favicon.png" alt="" aria-hidden="true">Argus Test Suite</h1>
   <div class="meta" id="meta"></div>
   <div id="verdict"></div>
@@ -224,13 +227,18 @@ const HEAD = $HEAD_JSON;"
   echo "  argusRepo: \"${ARGUS_REPO:-}\","
   echo "  argusSha: \"${ARGUS_SHA:-}\","
   echo "  argusVersion: \"${ARGUS_VERSION:-}\","
-  echo "  runUrl: \"${RUN_URL:-}\""
+  echo "  runUrl: \"${RUN_URL:-}\","
+  echo "  slug: \"${BRANCH_SLUG:-}\","
+  printf '  branches: %s\n' "${BRANCHES_JSON:-[]}"
   echo "};"
 } >> "$OUT_DIR/index.html"
 
 cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
+__NAV_JS__
 (function () {
   function $(id) { return document.getElementById(id); }
+  renderNav({ el: 'nav', branch: PAGE.branch, slug: PAGE.slug || PAGE.branch,
+              page: 'summary', branches: PAGE.branches || [], up: '' });
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -376,5 +384,7 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
 </body>
 </html>
 HTMLEOF2
+
+splice_nav "$OUT_DIR/index.html"
 
 echo "Summary hub written: $OUT_DIR/index.html ($(jq -r '"\(.passed)/\(.defined) passing, risk \(.risk), worst \(.worst)"' <<<"$HEAD_JSON"))"

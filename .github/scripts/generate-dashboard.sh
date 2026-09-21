@@ -76,6 +76,7 @@ if [ ! -f "$HISTORY_FILE" ]; then
 fi
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$SCRIPT_DIR/site-nav.sh"
 # ---------- failure classes (what a red test costs a consumer) ------------
 CLASSES_FILE="$SCRIPT_DIR/../data/failure-classes.json"
 if [ -f "$CLASSES_FILE" ] && jq empty "$CLASSES_FILE" 2>/dev/null; then
@@ -291,13 +292,16 @@ CURRENT_RUN=$(jq -n -c \
   --arg date "$DATE_STR" \
   --arg scope "$SCOPE" \
   --arg branch "${BRANCH_NAME:-}" \
+  --arg self_sha "${SELF_SHA:-}" \
+  --arg self_repo "${REPO:-}" \
   --argjson passed "$PASSED" \
   --argjson total "$TOTAL" \
   --argjson rate "$PASS_RATE" \
   --arg verdict "$VERDICT" \
   --arg url "$RUN_URL" \
   --arg run_id "$RUN_ID" \
-  '{date:$date, scope:$scope, branch:$branch, passed:$passed, total:$total, defined:$defined,
+  '{date:$date, scope:$scope, branch:$branch, self_sha:$self_sha, self_repo:$self_repo,
+    passed:$passed, total:$total, defined:$defined,
     rate:$rate, pct_defined:$pct_defined, risk:$risk, worst:$worst,
     verdict:$verdict, url:$url, run_id:$run_id}')
 
@@ -367,6 +371,7 @@ cat > "$OUT/index.html" << 'HTMLEOF'
    Hand-written rather than pulling Bootstrap + Lux (≈250KB) so the page stays a
    single self-contained file; only the typeface is fetched. */
 @import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,wght@0,300;0,400;0,600;0,700&display=swap');
+__NAV_CSS__
 :root {
   --bg: #ffffff; --surface: #ffffff; --surface2: #f8f9fa;
   --fg: #1a1a1a; --fg2: #55595c; --fg3: #919aa1;
@@ -776,6 +781,7 @@ footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border
 </head>
 <body>
 <div class="container">
+  <div class="nav" id="nav"></div>
   <header>
     <h1><img class="eye" src="__UP__favicon.png" alt="" aria-hidden="true">Argus Test Suite</h1>
     <div class="head-meta" id="head-meta"></div>
@@ -864,14 +870,21 @@ HTMLEOF
   printf '  failureClasses: %s,\n' "$CLASSES_JSON"
   printf '  catalog: %s,\n' "$CATALOG_JSON"
   printf '  jobs: %s,\n' "${JOBS_JSON:-[]}"
+  printf '  branches: %s,\n' "${BRANCHES_JSON:-[]}"
+  echo "  branchName: \"${BRANCH_NAME:-}\","
+  echo "  branchSlug: \"${BRANCH_SLUG:-}\","
   printf '  history: %s\n' "$HISTORY_DATA"
   echo "};"
 } >> "$OUT/index.html"
 
 cat >> "$OUT/index.html" << 'HTMLEOF2'
 
+__NAV_JS__
 (function () {
   const d = DATA;
+  renderNav({ el: 'nav', branch: d.branchName || d.branchSlug || 'branch',
+              slug: d.branchSlug || d.branchName, page: 'tests',
+              branches: d.branches || [], up: '../' });
   const server = d.runUrl.split('/').slice(0, 3).join('/');
   const repoUrl = server + '/' + d.repo;
   const srcBase = repoUrl + '/blob/' + (d.selfSha || 'main') + '/';
@@ -1897,6 +1910,8 @@ touch "$SHARED_DIR/.nojekyll"
 # Resolve the relative-path placeholder as a post-pass, so the HTML heredocs
 # above stay literal and greppable.
 sed -i.bak "s|__UP__|${UP}|g" "$OUT/index.html" && rm -f "$OUT/index.html.bak"
+
+splice_nav "$OUT/index.html"
 
 echo "Dashboard generated: $OUT/index.html"
 echo "History entries: $(jq 'length' "$HISTORY_FILE")"

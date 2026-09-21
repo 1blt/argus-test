@@ -826,6 +826,20 @@ jobs:
       # Which parts of the ref are actually under test. Runs before the
       # dashboard so the board can state the split next to the ref rather than
       # implying a branch run tested the whole branch.
+      # The branch list every page's switcher needs. Read from the LIVE site
+      # before anything is regenerated, because the pages are written before
+      # the preserve step runs and so cannot see their siblings otherwise.
+      - name: Fetch the published branch list
+        run: |
+          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
+          curl -sSf "$SITE/branches.json" -o /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
+          jq empty /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
+          # This branch may not be listed yet (first run), so add it.
+          B=$(jq -c --arg s "${{ env.branch_slug }}" --arg n "${{ env.branch_name }}" \
+                '(map(select(.slug != $s)) + [{slug:$s, name:$n}]) | sort_by(.slug)' /tmp/branches.json)
+          echo "BRANCHES_JSON=$B" >> "$GITHUB_ENV"
+          echo "branch switcher will list: $(jq -r 'map(.slug)|join(", ")' <<<"$B")"
+
       - name: Audit ref liveness
         env:
           GH_TOKEN: ${{ github.token }}
@@ -864,9 +878,11 @@ jobs:
           curl -sSf "$SITE/$SLUG/history.json" -o "_site/$SLUG/history.json" 2>/dev/null \
             || echo '[]' > "_site/$SLUG/history.json"
           jq empty "_site/$SLUG/history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/history.json"
-          echo "branch_dir=$SLUG" >> "$GITHUB_ENV"
-          echo "branch_slug=$SLUG" >> "$GITHUB_ENV"
-          echo "branch_name=$BRANCH" >> "$GITHUB_ENV"
+          {
+            echo "branch_dir=$SLUG"
+            echo "branch_slug=$SLUG"
+            echo "branch_name=$BRANCH"
+          } >> "$GITHUB_ENV"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
           echo "Branch '$BRANCH' publishes at /$SLUG/; history entries: $(jq 'length' "_site/$SLUG/history.json")"
 
@@ -933,6 +949,8 @@ jobs:
           # Pins each table row's "source" link to the exact commit of this
           # repo that defined the test, rather than drifting with main.
           SELF_SHA: ${{ github.sha }}
+          BRANCHES_JSON: ${{ env.BRANCHES_JSON }}
+          BRANCH_SLUG: ${{ env.branch_slug }}
           BRANCH_NAME: ${{ env.branch_name }}
           PAGES_DIR: _site/${{ env.branch_dir }}/tests
           SHARED_DIR: _site/${{ env.branch_dir }}
@@ -962,6 +980,8 @@ jobs:
           ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
           SELF_REPO: ${{ github.repository }}
           SELF_SHA: ${{ github.sha }}
+          BRANCH_SLUG: ${{ env.branch_slug }}
+          BRANCHES_JSON: ${{ env.BRANCHES_JSON }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/generate-cleanliness-page.sh
 
@@ -976,6 +996,8 @@ jobs:
           CLEAN_FILE: _site/liveness/cleanliness.json
           LIVENESS_FILE: _site/liveness/ref-liveness.json
           BRANCH: ${{ env.branch_name }}
+          BRANCH_SLUG: ${{ env.branch_slug }}
+          BRANCHES_JSON: ${{ env.BRANCHES_JSON }}
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
           ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
           ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
