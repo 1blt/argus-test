@@ -290,13 +290,14 @@ CURRENT_RUN=$(jq -n -c \
   --arg worst "$WORST" \
   --arg date "$DATE_STR" \
   --arg scope "$SCOPE" \
+  --arg branch "${BRANCH_NAME:-}" \
   --argjson passed "$PASSED" \
   --argjson total "$TOTAL" \
   --argjson rate "$PASS_RATE" \
   --arg verdict "$VERDICT" \
   --arg url "$RUN_URL" \
   --arg run_id "$RUN_ID" \
-  '{date:$date, scope:$scope, passed:$passed, total:$total, defined:$defined,
+  '{date:$date, scope:$scope, branch:$branch, passed:$passed, total:$total, defined:$defined,
     rate:$rate, pct_defined:$pct_defined, risk:$risk, worst:$worst,
     verdict:$verdict, url:$url, run_id:$run_id}')
 

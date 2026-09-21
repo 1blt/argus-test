@@ -26,8 +26,13 @@
 set -euo pipefail
 
 SITE_DIR="${SITE_DIR:?SITE_DIR not set}"
-BRANCHES="${BRANCHES:-main dev}"
 FALLBACK="${FALLBACK:-main}"
+# Every directory that actually holds a rendered page. Discovered rather than
+# listed: the suite now runs on main, dev and any feat/** or fix/** branch, so
+# a hardcoded pair would silently omit whichever branch someone is working on.
+BRANCHES="${BRANCHES:-$(cd "$SITE_DIR" && for d in */; do
+  [ -f "${d}index.html" ] && printf '%s ' "${d%/}"
+done)}"
 
 touch "$SITE_DIR/.nojekyll"
 
@@ -69,6 +74,13 @@ for b in $BRANCHES; do
   fi
   HAS_TESTS=false
   [ -f "$SITE_DIR/$b/tests/index.html" ] && HAS_TESTS=true
+  # feat/foo publishes at /feat-foo/ but must READ as feat/foo. The branch
+  # writes its own name into history.json; fall back to the slug.
+  NAME="$b"
+  if [ "$LATEST" != "null" ]; then
+    N=$(jq -r '.branch // empty' <<<"$LATEST")
+    [ -n "$N" ] && NAME="$N"
+  fi
 
   CARDS=$(jq -c \
     --arg b "$b" \
@@ -77,7 +89,8 @@ for b in $BRANCHES; do
     --argjson clean "$HAS_CLEAN" \
     --argjson tests "$HAS_TESTS" \
     --argjson metrics "$CLEAN" \
-    '. + [{branch:$b, latest:$latest, prev:$prev, hasClean:$clean, hasTests:$tests, metrics:$metrics}]' \
+    --arg name "$NAME" \
+    '. + [{branch:$b, name:$name, latest:$latest, prev:$prev, hasClean:$clean, hasTests:$tests, metrics:$metrics}]' \
     <<<"$CARDS")
 done
 
@@ -272,7 +285,7 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
 
     return '<div class="branch">' +
              '<a class="bhead" href="' + esc(b.branch) + '/">' +
-               '<span class="bname">' + esc(b.branch) + '</span>' +
+               '<span class="bname">' + esc(b.name || b.branch) + '</span>' +
                '<span class="bgo">branch summary &rarr;</span>' +
                (h ? '<span class="bwhen">' + esc(h.date) + '</span>' : '') +
              '</a>' + body + cl +
@@ -291,5 +304,11 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
 </body>
 </html>
 HTMLEOF3
+
+# The manifest a publishing branch reads to know what else to carry with it.
+# Pages replaces the whole site, so a branch missing from here gets deleted by
+# the next deploy until it runs again.
+jq -c 'map({slug: .branch, name: (.name // .branch)})' <<<"$CARDS" > "$SITE_DIR/branches.json"
+echo "Wrote $SITE_DIR/branches.json: $(jq -r 'map(.slug) | join(", ")' "$SITE_DIR/branches.json")"
 
 echo "Root index written: $SITE_DIR/index.html ($COUNT branch card(s))"

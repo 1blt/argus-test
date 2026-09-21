@@ -2,7 +2,10 @@ name: "Argus Test Suite"
 
 on:
   push:
-    branches: [main, dev]
+    # Every branch that carries work worth assessing. Not '**': the suite
+    # dispatches ~95 jobs plus child argus runs, so a scratch branch pushed
+    # twice a minute would swamp the runner pool and the dispatch targets.
+    branches: [main, dev, 'feat/**', 'fix/**']
 
   workflow_dispatch:
     inputs:
@@ -79,17 +82,26 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
+          # Only THIS BRANCH's strays. Dispatched children share one pool, so
+          # the previous filter -- "anything not carrying my run id" -- reaped
+          # the live children of every other branch's suite run too. The
+          # parent-level concurrency group is per-ref and correctly isolates
+          # parents; the children were not isolated at all, which made
+          # concurrent branches cancel each other and publish partial boards.
+          BRANCH_SLUG="${GITHUB_REF_NAME//\//-}"
+          echo "reaping strays for branch slug '$BRANCH_SLUG' only"
           N=0
           for WF in argus-run.yml argus-hardening-run.yml argus-iac-run.yml argus-config-run.yml; do
           for r in $(gh run list --workflow="$WF" --limit 100 \
                      --json databaseId,status,displayTitle \
                      --jq ".[] | select(.status==\"queued\" or .status==\"in_progress\")
+                           | select(.displayTitle | contains(\"-${BRANCH_SLUG}-\"))
                            | select(.displayTitle | contains(\"-${GITHUB_RUN_ID}-\") | not)
                            | .databaseId" 2>/dev/null); do
             gh run cancel "$r" >/dev/null 2>&1 && N=$((N+1))
           done
           done
-          echo "cancelled $N orphaned argus run(s) from superseded parents across all dispatch targets"
+          echo "cancelled $N orphaned argus run(s) from superseded runs on this branch"
 
   # ==========================================================================
   # Unit Tests (U1-U5)
@@ -842,18 +854,21 @@ jobs:
         id: branch
         run: |
           BRANCH="${GITHUB_REF_NAME}"
-          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
-          mkdir -p "_site/$BRANCH"
-          curl -sSf "$SITE/$BRANCH/history.json" -o "_site/$BRANCH/history.json" 2>/dev/null \
-            || echo '[]' > "_site/$BRANCH/history.json"
-          jq empty "_site/$BRANCH/history.json" 2>/dev/null || echo '[]' > "_site/$BRANCH/history.json"
-          echo "branch_dir=$BRANCH" >> "$GITHUB_ENV"
-          # Artifact names reject / : " < > | * ? \ \r \n, so a branch like
-          # feat/foo is a valid directory but an invalid artifact name.
+          # One slug for both the artifact name and the site directory.
+          # Artifact names reject / : " < > | * ? \ \r \n; a nested directory
+          # would also make every relative link on the page depth-dependent,
+          # so feat/foo publishes at /feat-foo/ and displays as "feat/foo".
           SLUG=$(echo "$BRANCH" | tr '/:"<>|*?\\' '-')
+          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
+          mkdir -p "_site/$SLUG"
+          curl -sSf "$SITE/$SLUG/history.json" -o "_site/$SLUG/history.json" 2>/dev/null \
+            || echo '[]' > "_site/$SLUG/history.json"
+          jq empty "_site/$SLUG/history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/history.json"
+          echo "branch_dir=$SLUG" >> "$GITHUB_ENV"
           echo "branch_slug=$SLUG" >> "$GITHUB_ENV"
+          echo "branch_name=$BRANCH" >> "$GITHUB_ENV"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
-          echo "History entries loaded for $BRANCH: $(jq 'length' "_site/$BRANCH/history.json")"
+          echo "Branch '$BRANCH' publishes at /$SLUG/; history entries: $(jq 'length' "_site/$SLUG/history.json")"
 
       # Per-job log URLs so the dashboard's Logs column points at the job that ran
       # each test rather than repeating the run URL on every row. conclusion and
@@ -918,6 +933,7 @@ jobs:
           # Pins each table row's "source" link to the exact commit of this
           # repo that defined the test, rather than drifting with main.
           SELF_SHA: ${{ github.sha }}
+          BRANCH_NAME: ${{ env.branch_name }}
           PAGES_DIR: _site/${{ env.branch_dir }}/tests
           SHARED_DIR: _site/${{ env.branch_dir }}
           SITE_UP: "../"
@@ -939,7 +955,7 @@ jobs:
         env:
           CLEAN_FILE: _site/liveness/cleanliness.json
           OUT_DIR: _site/${{ env.branch_dir }}/code-cleanliness
-          BRANCH: ${{ env.branch_dir }}
+          BRANCH: ${{ env.branch_name }}
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
           ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
           ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
@@ -959,7 +975,7 @@ jobs:
           ALL_JSON: ${{ env.ALL_JSON }}
           CLEAN_FILE: _site/liveness/cleanliness.json
           LIVENESS_FILE: _site/liveness/ref-liveness.json
-          BRANCH: ${{ env.branch_dir }}
+          BRANCH: ${{ env.branch_name }}
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
           ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
           ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
@@ -972,35 +988,43 @@ jobs:
       # set of files, so pull it back off the live site and republish both. If it
       # is not there yet (first run, or that branch has never run), it simply
       # reappears the next time that branch deploys.
-      - name: Preserve the other branch's site
+      # Pages replaces the whole site on every deployment, so a branch that
+      # publishes must carry every other branch's pages with it or it deletes
+      # them. There used to be exactly one "other" branch; now there are as
+      # many as have ever published, so the live site's branches.json is the
+      # list. A branch missing from it simply reappears when it next runs.
+      - name: Preserve every other branch's site
         run: |
-          BRANCH="${GITHUB_REF_NAME}"
-          OTHER=$([ "$BRANCH" = "main" ] && echo dev || echo main)
+          set -uo pipefail
           SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
-          mkdir -p "_site/$OTHER/tests" "_site/$OTHER/code-cleanliness"
+          MINE="${{ env.branch_slug }}"
+          curl -sSf "$SITE/branches.json" -o /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
+          jq empty /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
+          # Older sites predate the manifest; fall back to the two that existed.
+          if [ "$(jq 'length' /tmp/branches.json)" = "0" ]; then
+            echo '[{"slug":"main","name":"main"},{"slug":"dev","name":"dev"}]' > /tmp/branches.json
+          fi
           KEPT=0
-          for f in index.html history.json cleanliness.json favicon.png \
-                   tests/index.html code-cleanliness/index.html; do
-            if curl -sSf "$SITE/$OTHER/$f" -o "_site/$OTHER/$f" 2>/dev/null; then
+          for SLUG in $(jq -r '.[].slug' /tmp/branches.json); do
+            [ "$SLUG" = "$MINE" ] && continue
+            mkdir -p "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness"
+            GOT=0
+            for f in index.html history.json cleanliness.json favicon.png \
+                     tests/index.html code-cleanliness/index.html; do
+              curl -sSf "$SITE/$SLUG/$f" -o "_site/$SLUG/$f" 2>/dev/null && GOT=$((GOT + 1))
+            done
+            rmdir "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness" 2>/dev/null || true
+            if [ "$GOT" -eq 0 ]; then
+              rm -rf "_site/$SLUG"
+              echo "  $SLUG: nothing live to preserve"
+            else
+              touch "_site/$SLUG/.nojekyll"
               KEPT=$((KEPT + 1))
+              echo "  $SLUG: kept $GOT file(s)"
             fi
           done
-          # An empty directory would otherwise ship as a 404 that looks like a
-          # page that should exist.
-          rmdir "_site/$OTHER/tests" "_site/$OTHER/code-cleanliness" 2>/dev/null || true
-          if [ "$KEPT" -eq 0 ]; then
-            rmdir "_site/$OTHER" 2>/dev/null || true
-            echo "::notice::No existing /$OTHER/ site to preserve - it will appear when $OTHER next runs"
-          else
-            touch "_site/$OTHER/.nojekyll"
-            echo "Preserved $KEPT file(s) from /$OTHER/"
-          fi
+          echo "Preserved $KEPT other branch(es)"
 
-      # The switcher lists only the branches actually present in the artifact.
-      # Publishing is gated by the github-pages environment's deployment branch
-      # policy, so a branch that is not allowed to deploy never appears here --
-      # better than a card linking to a 404. With only one branch published the
-      # root just forwards to it, so the site has no dead ends either way.
       # cleanliness.json follows its branch into the published site. The root
       # index reads each branch's copy to show that branch's figures, exactly
       # as it reads history.json -- staging is deleted below, so anything the
@@ -1021,8 +1045,7 @@ jobs:
       - name: Write the root index
         env:
           SITE_DIR: _site
-          BRANCHES: "main dev"
-          FALLBACK: ${{ github.ref_name }}
+          FALLBACK: ${{ env.branch_slug }}
         run: bash .github/scripts/generate-root-index.sh
 
       # Every branch gets the rendered site as a downloadable artifact, so a
@@ -1069,6 +1092,11 @@ jobs:
   # flight -- 42 jobs killed by cancel-in-progress and by the next run's
   # reap-orphans -- and the summary still published 62 of 88 tests as the
   # current state of main.
+  # Publishing from any assessed branch needs the github-pages environment to
+  # allow it. The environment's deployment branch policy is repo configuration,
+  # not workflow code, so it is listed in the README: main, dev, feat/*, fix/*.
+  # A branch the policy rejects fails here at the environment gate with no
+  # steps run -- loudly, rather than silently skipping.
   publish:
     name: "Publish dashboard"
     runs-on: ubuntu-latest
@@ -1077,7 +1105,8 @@ jobs:
       always() && !cancelled()
       && needs.summary.result != 'skipped'
       && needs.summary.outputs.run_complete == 'true'
-      && github.ref_name == 'main'
+      && (github.ref_name == 'main' || github.ref_name == 'dev'
+          || startsWith(github.ref_name, 'feat/') || startsWith(github.ref_name, 'fix/'))
     permissions:
       contents: read      # checkout is not used here, but download-artifact reads the run
       actions: read       # download-artifact@v4

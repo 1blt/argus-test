@@ -74,7 +74,14 @@ runs:
           echo "::warning::$REFS_FILE not found (no checkout?) -- skipping the client-side ref check; the dispatch target still guards it."
         fi
 
-        MARKER="${TEST_ID}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        # The marker carries the BRANCH as well as the run id. reap-orphans
+        # cancels dispatched children that do not belong to the current run,
+        # and children live in one shared pool -- so without a branch component
+        # a suite run on one branch cancels the in-flight children of a run on
+        # another. That is the same failure that published a 62-of-88 board.
+        # Slashes are stripped: the marker is matched against a run-name.
+        BRANCH_SLUG="${GITHUB_REF_NAME//\//-}"
+        MARKER="${TEST_ID}-${BRANCH_SLUG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
         echo "marker: $MARKER   workflow: $WF   argus_ref: $ARGUS_REF"
 
         echo "$INPUTS_JSON" | jq -e . >/dev/null 2>&1 || fail "inputs_json is not valid JSON: $INPUTS_JSON"

@@ -521,6 +521,28 @@ gh workflow run test-suite.yml -f argus_ref=feat/my-feature
 gh run watch
 ```
 
+### Which branches are assessed
+
+`main`, `dev`, and any `feat/**` or `fix/**` branch. Deliberately not `**`: a
+run is ~95 jobs plus child argus runs, so a scratch branch pushed twice a
+minute would swamp the runner pool and the dispatch targets.
+
+Publishing also needs the **`github-pages` environment** to allow the branch.
+That is repo configuration, not workflow code, so it has to be kept in step
+with the trigger list — the policy currently allows `main`, `dev`, `feat/*`
+and `fix/*`. A branch the policy rejects fails at the environment gate with no
+steps run, which is at least loud.
+
+A branch publishes at its **slug**: `feat/foo` renders at `/feat-foo/` and
+displays as `feat/foo`. Artifact names reject `/`, and a nested directory would
+make every relative link on the page depth-dependent.
+
+> **One suite run per branch at a time.** Dispatched argus runs share a single
+> pool, and `reap-orphans` used to cancel every child not carrying its own run
+> id — so two branches running concurrently cancelled each other's children and
+> published partial boards. Markers now carry the branch slug and reaping is
+> scoped to it.
+
 ### Site layout
 
 Each branch publishes its own subtree, so `dev` results never overwrite
@@ -529,6 +551,8 @@ Each branch publishes its own subtree, so `dev` results never overwrite
 ```
 argus-test/
 ├── index.html                       root: one card per branch, with its figures
+├── branches.json                    manifest; a publishing branch reads it to
+│                                    know which other branches to carry along
 ├── main/
 │   ├── index.html                   summary hub — risk, pass rate, ref, links
 │   ├── history.json                 last 20 runs, for the score chart
