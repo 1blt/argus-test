@@ -31,49 +31,73 @@ duplication() {
   local -a paths=("$@")
   local -a present=()
   for p in "${paths[@]}"; do [ -e "$root/$p" ] && present+=("$root/$p"); done
-  [ ${#present[@]} -eq 0 ] && { echo 'null'; return; }
-  have npx || { echo 'null'; return; }
+  if [ ${#present[@]} -eq 0 ]; then
+    echo '{"error":"none of the configured paths exist in this checkout"}'; return
+  fi
+  if ! have npx; then
+    echo '{"error":"npx is not on PATH, so the clone detector could not run"}'; return
+  fi
 
   local tmp; tmp=$(mktemp -d)
   if npx --yes jscpd@4 "${present[@]}" \
         --min-lines 5 --min-tokens 50 \
         --reporters json --output "$tmp" --silent >/dev/null 2>&1 \
      && [ -f "$tmp/jscpd-report.json" ]; then
-    jq -c '{
+    # The clone LOCATIONS are the point. A percentage is a claim; the file and
+    # line range of each pair is the evidence for it, and it is what someone
+    # has to open to decide whether the duplication matters.
+    jq -c --arg root "$root" '{
       percent:   (.statistics.total.percentage // null),
       clones:    (.statistics.total.clones // null),
       duplicated_lines: (.statistics.total.duplicatedLines // null),
-      total_lines:      (.statistics.total.lines // null)
+      total_lines:      (.statistics.total.lines // null),
+      groups: [ .duplicates[]? | {
+        lines:  .lines,
+        tokens: .tokens,
+        format: .format,
+        a: { file: (.firstFile.name  | sub("^" + $root + "/"; "")), start: .firstFile.start,  end: .firstFile.end },
+        b: { file: (.secondFile.name | sub("^" + $root + "/"; "")), start: .secondFile.start, end: .secondFile.end }
+      } ] | sort_by(-.lines)
     }' "$tmp/jscpd-report.json"
   else
-    echo 'null'
+    echo '{"error":"the clone detector exited non-zero or produced no report"}'
   fi
   rm -rf "$tmp"
 }
 
 # ---------------------------------------------------------------------------
-# KISS: cognitive complexity. Only meaningful for the Python target; the suite
-# is YAML and bash, which no cognitive-complexity implementation parses.
-# Reported as null for the suite rather than approximated by something else --
-# a substituted metric that measures a different thing is worse than a blank.
+# KISS: cognitive complexity, for BOTH languages in play.
+#
+# This used to report "not applicable" for the suite on the grounds that no
+# implementation parses Actions YAML or shell. That was a cop-out: Campbell's
+# rules are language-agnostic by construction -- increment on each break in
+# linear flow, and add the current nesting depth when the break is nested --
+# and the suite's executable content is shell, several thousand lines of it.
+# Declining to measure the thing this repository is actually made of, on a page
+# about this repository, measured nothing and said so quietly.
+#
+# So: Python via the reference implementation, shell via the rules applied
+# directly. The shell pass is an implementation of a published measure, not a
+# proxy invented here, and it reports the constructs it counted so the number
+# can be checked rather than believed.
 # ---------------------------------------------------------------------------
-cognitive() {
+cognitive_python() {
   local root="$1" pkg="$2"
-  [ -d "$root/$pkg" ] || { echo 'null'; return; }
-  have python3 || { echo 'null'; return; }
-  python3 -m cognitive_complexity --help >/dev/null 2>&1 \
-    || pip install --quiet cognitive-complexity flake8-cognitive-complexity >/dev/null 2>&1 \
-    || { echo 'null'; return; }
+  [ -d "$root/$pkg" ] || { echo '{"error":"the package directory is not present in this checkout"}'; return; }
+  have python3 || { echo '{"error":"python3 is not on PATH"}'; return; }
+  python3 -c 'import cognitive_complexity' 2>/dev/null \
+    || pip install --quiet cognitive-complexity >/dev/null 2>&1 \
+    || { echo '{"error":"could not install the cognitive-complexity package"}'; return; }
 
-  python3 - "$root/$pkg" <<'PY' 2>/dev/null || echo 'null'
+  python3 - "$root/$pkg" <<'PY' 2>/dev/null || echo '{"error":"the python pass raised"}'
 import ast, json, sys, pathlib
 try:
     from cognitive_complexity.api import get_cognitive_complexity
 except Exception:
-    print("null"); sys.exit(0)
+    print(json.dumps({"error": "cognitive_complexity import failed"})); sys.exit(0)
 
-THRESHOLD = 15   # SonarSource's default advisory level. A convention.
-worst, worst_at, over, n = 0, None, 0, 0
+THRESHOLD = 15
+units = []
 for f in pathlib.Path(sys.argv[1]).rglob("*.py"):
     if "/tests/" in str(f) or "__pycache__" in str(f):
         continue
@@ -87,14 +111,164 @@ for f in pathlib.Path(sys.argv[1]).rglob("*.py"):
                 c = get_cognitive_complexity(node)
             except Exception:
                 continue
-            n += 1
-            if c > THRESHOLD:
-                over += 1
-            if c > worst:
-                worst, worst_at = c, f"{f.name}:{node.name}"
-print(json.dumps({"worst": worst, "worst_at": worst_at,
-                  "over_threshold": over, "threshold": THRESHOLD,
-                  "units": n}))
+            units.append({"file": str(f).split("/", 1)[-1], "name": node.name,
+                          "line": node.lineno, "score": c})
+units.sort(key=lambda u: -u["score"])
+print(json.dumps({
+    "worst": units[0]["score"] if units else 0,
+    "worst_at": (units[0]["file"] + ":" + units[0]["name"]) if units else None,
+    "over_threshold": sum(1 for u in units if u["score"] > THRESHOLD),
+    "threshold": THRESHOLD,
+    "units": len(units),
+    "language": "python",
+    "top": units[:8],
+}))
+PY
+}
+
+cognitive_shell() {
+  local root="$1"
+  have python3 || { echo '{"error":"python3 is not on PATH"}'; return; }
+  python3 - "$root" <<'PY' 2>/dev/null || echo '{"error":"the shell pass raised"}'
+import json, re, sys, pathlib
+
+# Campbell's Cognitive Complexity, applied to shell. Each construct that breaks
+# linear reading costs 1, plus the nesting depth it sits at. Boolean operators
+# cost 1 per sequence, not per operator. `else`/`elif` cost 1 flat, with no
+# nesting surcharge, because the reader is already in the construct.
+THRESHOLD = 15
+OPEN  = re.compile(r'^\s*(if|for|while|until|case)\b')
+CLOSE = re.compile(r'^\s*(fi|done|esac)\b')
+FLAT  = re.compile(r'^\s*(elif|else)\b')
+ARM   = re.compile(r'^\s*[^()\s|][^()]*\)\s*$')          # a case arm
+BOOL  = re.compile(r'(\&\&|\|\|)')
+FUNC  = re.compile(r'^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{')
+
+HEREDOC = re.compile(r"<<-?\s*[\'\"]?([A-Za-z_][A-Za-z0-9_]*)[\'\"]?")
+
+def mask_heredocs(lines):
+    """Blank heredoc BODIES, keeping line numbers intact.
+
+    These scripts embed JavaScript, CSS and jq programs in heredocs. To bash
+    those bodies are data -- it does not branch on them -- but they are full of
+    `if`, `&&`, `||` and `function foo() {`. Counting them scored the embedded
+    language and attributed it to the shell: generate-dashboard.sh came out at
+    1955, and the "worst function" was a JavaScript one.
+
+    Blanked rather than removed so every reported line number still points at
+    the real line in the file. A number offered as proof has to survive being
+    looked up.
+    """
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)                 # the opener itself is real shell
+        m = HEREDOC.search(line)
+        if m:
+            term = m.group(1)
+            i += 1
+            while i < len(lines) and lines[i].strip() != term:
+                out.append("")           # body: data, not control flow
+                i += 1
+            if i < len(lines):
+                out.append(lines[i])     # the terminator
+        i += 1
+    return out
+
+def score_lines(lines, start_at=1):
+    depth, total, why = 0, 0, {}
+    def bump(kind, n):
+        why[kind] = why.get(kind, 0) + n
+    in_case = 0
+    for raw in lines:
+        line = raw.split('#', 1)[0] if raw.lstrip().startswith('#') else raw
+        if CLOSE.match(line):
+            depth = max(0, depth - 1)
+            if re.match(r'^\s*esac\b', line):
+                in_case = max(0, in_case - 1)
+            continue
+        if FLAT.match(line):
+            total += 1; bump('else/elif', 1); continue
+        m = OPEN.match(line)
+        if m:
+            total += 1 + depth
+            bump(m.group(1), 1)
+            depth += 1
+            if m.group(1) == 'case':
+                in_case += 1
+            continue
+        if in_case and ARM.match(line) and not line.strip().startswith('esac'):
+            total += 1; bump('case arm', 1)
+        nb = len(BOOL.findall(line))
+        if nb:
+            total += 1; bump('&&/||', 1)
+    return total, why
+
+units = []
+root = pathlib.Path(sys.argv[1])
+
+# 1. shell scripts: one unit per function, plus the top level as a unit
+for f in sorted(root.glob(".github/scripts/*.sh")):
+    lines = mask_heredocs(f.read_text(errors="replace").splitlines())
+    rel = str(f.relative_to(root))
+    cur, buf, start, depth_guard = None, [], 0, 0
+    toplevel = []
+    for i, line in enumerate(lines, 1):
+        m = FUNC.match(line)
+        if m and cur is None:
+            cur, buf, start = m.group(1), [], i
+            depth_guard = 1
+            continue
+        if cur is not None:
+            depth_guard += line.count('{') - line.count('}')
+            if depth_guard <= 0:
+                sc, why = score_lines(buf)
+                units.append({"file": rel, "name": cur + "()", "line": start,
+                              "score": sc, "why": why})
+                cur = None
+            else:
+                buf.append(line)
+        else:
+            toplevel.append(line)
+    sc, why = score_lines(toplevel)
+    if sc:
+        units.append({"file": rel, "name": "(top level)", "line": 1,
+                      "score": sc, "why": why})
+
+# 2. workflow `run:` blocks: one unit each, since each is an executable body
+RUN = re.compile(r'^(\s*)(?:- name:.*\n\s*)?\s*run:\s*\|')
+for f in sorted(root.glob(".github/workflows/*.yml")):
+    lines = f.read_text(errors="replace").splitlines()
+    rel = str(f.relative_to(root))
+    i = 0
+    while i < len(lines):
+        m = re.match(r'^(\s*)run:\s*\|', lines[i])
+        if not m:
+            i += 1; continue
+        indent = len(m.group(1))
+        start = i + 1
+        body, j = [], i + 1
+        while j < len(lines):
+            ln = lines[j]
+            if ln.strip() and (len(ln) - len(ln.lstrip())) <= indent:
+                break
+            body.append(ln); j += 1
+        sc, why = score_lines(mask_heredocs(body))
+        if sc:
+            units.append({"file": rel, "name": f"run: block @{start}",
+                          "line": start, "score": sc, "why": why})
+        i = j
+
+units.sort(key=lambda u: -u["score"])
+print(json.dumps({
+    "worst": units[0]["score"] if units else 0,
+    "worst_at": (units[0]["file"] + ":" + units[0]["name"]) if units else None,
+    "over_threshold": sum(1 for u in units if u["score"] > THRESHOLD),
+    "threshold": THRESHOLD,
+    "units": len(units),
+    "language": "shell + Actions YAML",
+    "top": units[:8],
+}))
 PY
 }
 
@@ -199,18 +373,20 @@ PY
 echo "Measuring suite (${REPO_ROOT})..."
 SUITE_DUP=$(duplication "$REPO_ROOT" .github/workflows .github/scripts .github/actions)
 SUITE_TUP=$(tuple_dupes "$REPO_ROOT")
+SUITE_COG=$(cognitive_shell "$REPO_ROOT")
 SUITE=$(jq -n -c --argjson dup "${SUITE_DUP:-null}" --argjson tup "${SUITE_TUP:-null}" \
-  '{target:"suite", duplication:$dup, cognitive:null, tuple_dupes:$tup}')
+  --argjson cog "${SUITE_COG:-null}" \
+  '{target:"suite", duplication:$dup, cognitive:$cog, tuple_dupes:$tup}')
 
 if [ -n "$ARGUS_DIR" ] && [ -d "$ARGUS_DIR" ]; then
   echo "Measuring argus (${ARGUS_DIR})..."
   A_DUP=$(duplication "$ARGUS_DIR" argus)
-  A_COG=$(cognitive "$ARGUS_DIR" argus)
+  A_COG=$(cognitive_python "$ARGUS_DIR" argus)
   ARGUS=$(jq -n -c --argjson dup "${A_DUP:-null}" --argjson cog "${A_COG:-null}" \
     '{target:"argus", duplication:$dup, cognitive:$cog, tuple_dupes:null}')
 else
   echo "No argus checkout supplied; the argus panel will read 'not measured'."
-  ARGUS='{"target":"argus","duplication":null,"cognitive":null,"tuple_dupes":null}'
+  ARGUS='{"target":"argus","duplication":{"error":"no argus checkout was supplied to this run"},"cognitive":{"error":"no argus checkout was supplied to this run"},"tuple_dupes":null}'
 fi
 
 jq -n --argjson suite "$SUITE" --argjson argus "$ARGUS" \

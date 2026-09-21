@@ -2,26 +2,17 @@
 # =============================================================================
 # The code-cleanliness page: _site/<branch>/code-cleanliness/index.html
 #
-# Split off the main board deliberately. The dashboard answers one question --
-# does argus still behave the way a consumer expects -- and a KISS/DRY panel
-# sitting under it invites the reading that a duplication figure is part of
-# that verdict. It is not, and nothing here gates anything.
+# Split off the board because nothing here gates anything, and a duplication
+# figure under the verdict reads as though it were part of it.
 #
-# The rationale and the citations live ON this page rather than only in
-# .github/data/cleanliness-metrics.json, because a number whose justification
-# is in a file nobody opens is a number people will argue with from memory.
+# The page leads with EVIDENCE, not prose: every number is followed by the
+# file and line range behind it, so a reader checks it instead of believing it.
 #
-# Self-contained, like the dashboard: the CSS tokens are repeated rather than
-# shared, so the two pages deploy independently and neither can break the
-# other's rendering. That is a deliberate duplication and it is the kind this
-# page's own tuple metric would flag, so: noted here rather than hidden.
-#
-# Env:
-#   CLEAN_FILE      cleanliness.json from cleanliness-metrics.sh
-#   CLEAN_CFG_FILE  .github/data/cleanliness-metrics.json  (labels, prose, refs)
-#   OUT_DIR         directory to write index.html into
-#   ARGUS_REF, ARGUS_REPO, BRANCH, RUN_URL, DATE_STR   (all optional)
+# There is no "not applicable" state. A metric that cannot be produced renders
+# as a fault with its reason, because a blank cell and a clean result look the
+# same, and this suite exists to reject exactly that equivalence.
 # =============================================================================
+
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -112,6 +103,19 @@ h2 { font-size:0.82rem; font-weight:700; text-transform:uppercase; letter-spacin
 h3 { font-size:0.74rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em;
      color:var(--fg); margin:24px 0 10px; }
 p { font-size:0.82rem; max-width:74ch; }
+.figure { display:flex; align-items:baseline; gap:12px; margin:14px 0 8px; }
+.fnum { font-size:1.9rem; font-weight:300; color:var(--fg); line-height:1; }
+.flab { font-size:0.74rem; color:var(--fg3); }
+.fault { border:1px solid var(--warn); background:var(--warn-bg); color:var(--warn-ink);
+         padding:10px 13px; margin:14px 0 8px; font-size:0.78rem; }
+.flabel { font-size:0.6rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;
+          border:1px solid var(--warn-ink); padding:0 5px; margin-right:8px; }
+.clean { font-size:0.78rem; color:var(--pass-ink); margin:6px 0 10px; }
+td.num { font-variant-numeric:tabular-nums; color:var(--fg); font-weight:600; }
+tr.over td.num { color:var(--warn-ink); }
+.unit { color:var(--fg3); }
+.why { color:var(--fg3); font-size:0.73rem; }
+.more { font-size:0.72rem; color:var(--fg3); margin:4px 0 12px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin:12px 0 8px; }
 .card { border:1px solid var(--border); padding:14px 16px; background:var(--surface); }
 .card .t { font-size:0.66rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--fg3); }
@@ -172,155 +176,142 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  function loc(f, a, b) {
+    return '<span class="mono">' + esc(f) + '</span>:' + esc(a) + (b && b !== a ? '\u2013' + esc(b) : '');
+  }
 
-  // ---- header -------------------------------------------------------------
   var m = [];
-  if (PAGE.branch) { m.push('branch <span class="mono">' + esc(PAGE.branch) + '</span>'); }
-  if (PAGE.argusRef) { m.push('argus@' + esc(PAGE.argusRef)); }
+  if (PAGE.branch)   m.push('branch <span class="mono">' + esc(PAGE.branch) + '</span>');
+  if (PAGE.argusRef) m.push('argus <span class="mono">' + esc(PAGE.argusRef) + '</span>');
   m.push(esc(PAGE.date));
-  if (PAGE.runUrl) { m.push('<a href="' + esc(PAGE.runUrl) + '">view run &#8599;</a>'); }
+  if (PAGE.runUrl)   m.push('<a href="' + esc(PAGE.runUrl) + '">view run &#8599;</a>');
   $('meta').innerHTML = m.join('<span class="sep">&middot;</span>');
 
   $('lede').innerHTML =
-    'KISS and DRY indicators for this suite and for argus, <strong>reported and never gated</strong>. ' +
-    'Nothing on this page can fail a build: the suite’s job is argus’s consumer contract, and a red ' +
-    'has to mean argus broke rather than that a function grew. A gated cleanliness number also gets met ' +
-    'rather than earned — the figure improves and the code does not.';
+    'Reported, never gated. Every figure is followed by the lines behind it.';
 
   var html = '';
 
-  // ---- per-target measurements -------------------------------------------
-  function card(title, value, detail, tag, na) {
-    return '<div class="card">' +
-           '<div class="t">' + esc(title) + (tag ? '<span class="tag">' + esc(tag) + '</span>' : '') + '</div>' +
-           '<div class="v' + (na ? ' na' : '') + '">' + esc(value) + '</div>' +
-           '<div class="d">' + detail + '</div></div>';
+  // A metric that could not run is a FAULT, not a blank. Rendering it as a
+  // neutral dash would make "we did not look" and "there is nothing there"
+  // indistinguishable -- the exact equivalence this suite rejects everywhere
+  // else, so it is not granted here either.
+  function fault(what, why) {
+    return '<div class="fault"><span class="flabel">Not measured</span> ' +
+           esc(what) + ' &mdash; ' + esc(why) +
+           '. This is a broken metric, not a clean result.</div>';
   }
-
-  html += '<h2>Measurements</h2>' +
-    '<p>Two targets, reported separately and <strong>never summed</strong>. A combined score would let tidy ' +
-    'tests offset untidy source, and it would let this board assert something about argus’s internals ' +
-    'that its maintainers have not agreed to. A metric that could not be computed reads ' +
-    '<em>not measured</em>, never 0 — absence of evidence is not evidence of cleanliness.</p>';
 
   ['suite', 'argus'].forEach(function (key) {
     var t = (CLEAN.targets || {})[key], cfg = (CFG.targets || {})[key];
     if (!t || !cfg) return;
-    var cards = '';
+    html += '<h2>' + esc(cfg.label) + '</h2>';
 
-    var md = (CFG.metrics || {}).duplication || {};
-    if (t.duplication && t.duplication.percent != null) {
-      cards += card(md.label || 'Duplicated lines',
-        Number(t.duplication.percent).toFixed(1) + '%',
-        esc(t.duplication.clones + ' clone group(s); ' + t.duplication.duplicated_lines +
-            ' of ' + t.duplication.total_lines + ' lines.'),
-        'DRY');
+    // ---- duplication ------------------------------------------------------
+    var d = t.duplication;
+    if (!d || d.error) {
+      html += fault('Duplicated lines', (d && d.error) || 'no result was produced');
     } else {
-      cards += card(md.label || 'Duplicated lines', 'not measured',
-        'No clone detector was available in this run.', 'DRY', true);
+      html += '<div class="figure"><span class="fnum">' + Number(d.percent).toFixed(1) +
+              '%</span><span class="flab">duplicated &middot; ' + esc(d.clones) +
+              ' clone groups &middot; ' + esc(d.duplicated_lines) + ' of ' +
+              esc(d.total_lines) + ' lines</span></div>';
+      var g = d.groups || [];
+      if (g.length) {
+        html += '<table><thead><tr><th>Lines</th><th>Tokens</th><th>Here</th>' +
+                '<th>Is repeated at</th></tr></thead><tbody>' +
+          g.slice(0, 12).map(function (x) {
+            return '<tr><td>' + esc(x.lines) + '</td><td>' + esc(x.tokens) + '</td>' +
+                   '<td>' + loc(x.a.file, x.a.start, x.a.end) + '</td>' +
+                   '<td>' + loc(x.b.file, x.b.start, x.b.end) + '</td></tr>';
+          }).join('') + '</tbody></table>' +
+          (g.length > 12 ? '<div class="more">' + (g.length - 12) + ' further group(s) not shown.</div>' : '');
+      } else {
+        html += '<div class="clean">No clone group reached the 5-line / 50-token floor.</div>';
+      }
     }
 
-    var mc = (CFG.metrics || {}).cognitive || {};
-    if (t.cognitive && t.cognitive.worst != null) {
-      cards += card(mc.label || 'Cognitive complexity', String(t.cognitive.worst),
-        esc(t.cognitive.over_threshold + ' of ' + t.cognitive.units + ' unit(s) over ' +
-            t.cognitive.threshold + (t.cognitive.worst_at ? '. Worst: ' + t.cognitive.worst_at : '')),
-        'KISS');
+    // ---- cognitive complexity ---------------------------------------------
+    var c = t.cognitive;
+    if (!c || c.error) {
+      html += fault('Cognitive complexity', (c && c.error) || 'no result was produced');
     } else {
-      cards += card(mc.label || 'Cognitive complexity', 'not applicable',
-        'No implementation parses Actions YAML or shell. Left blank rather than substituting a metric ' +
-        'that measures something else.', 'KISS', true);
+      html += '<div class="figure"><span class="fnum">' + esc(c.worst) +
+              '</span><span class="flab">worst unit &middot; ' + esc(c.over_threshold) +
+              ' of ' + esc(c.units) + ' over ' + esc(c.threshold) +
+              ' &middot; ' + esc(c.language) + '</span></div>';
+      var top = c.top || [];
+      if (top.length) {
+        html += '<table><thead><tr><th>Score</th><th>Unit</th>' +
+                '<th>What it counted</th></tr></thead><tbody>' +
+          top.map(function (u) {
+            var why = u.why
+              ? Object.keys(u.why).map(function (k) { return k + ' \u00d7' + u.why[k]; }).join(', ')
+              : '';
+            return '<tr' + (u.score > c.threshold ? ' class="over"' : '') + '>' +
+                   '<td class="num">' + esc(u.score) + '</td>' +
+                   '<td>' + loc(u.file, u.line) + ' <span class="unit">' + esc(u.name) + '</span></td>' +
+                   '<td class="why">' + esc(why) + '</td></tr>';
+          }).join('') + '</tbody></table>';
+      }
     }
 
-    var mt = (CFG.metrics || {}).tuple_dupes || {};
-    if (t.tuple_dupes) {
-      var td = t.tuple_dupes;
+    // ---- duplicate tuples (suite only) ------------------------------------
+    var td = t.tuple_dupes;
+    if (td && !td.error) {
       var unexplained = (td.exact_rows || 0) + (td.invocation_rows || 0);
-      cards += card(mt.label || 'Duplicate test tuples', String(unexplained),
-        esc(td.rows + ' matrix rows; ' + (td.exact_rows || 0) + ' exact, ' +
-            (td.invocation_rows || 0) + ' same-invocation, ' +
-            ((td.exempted || []).length) + ' annotated as deliberate.'),
-        'DRY');
+      html += '<div class="figure"><span class="fnum">' + esc(unexplained) +
+              '</span><span class="flab">unexplained duplicate tuples &middot; ' +
+              esc(td.rows) + ' matrix rows &middot; ' +
+              esc((td.exempted || []).length) + ' annotated deliberate</span></div>';
+      var rows = (td.exact || []).concat(td.invocation || []);
+      if (rows.length) {
+        html += '<table><thead><tr><th>Tests</th><th>Defined at</th></tr></thead><tbody>' +
+          rows.map(function (x) {
+            return '<tr><td>' + esc(x.tests.join(' = ')) + '</td><td class="mono">' +
+                   esc((x.where || []).join('  ')) + '</td></tr>';
+          }).join('') + '</tbody></table>';
+      }
+      if ((td.exempted || []).length) {
+        html += '<table><thead><tr><th>Annotated</th><th>Reason given in the workflow</th></tr></thead><tbody>' +
+          td.exempted.map(function (x) {
+            return '<tr><td>' + esc(x.tests.join(' = ')) + '</td><td class="why">' +
+                   esc(x.allowed) + '</td></tr>';
+          }).join('') + '</tbody></table>';
+      }
     }
-
-    html += '<h3>' + esc(cfg.label) + '</h3><div class="grid">' + cards + '</div>' +
-            '<div class="note">' + esc(cfg.note || '') + '</div>';
   });
 
-  // ---- duplicate detail ----------------------------------------------------
-  var suite = (CLEAN.targets || {}).suite || {};
-  var td = suite.tuple_dupes;
-  if (td) {
-    html += '<h2>Duplicate test tuples, in detail</h2>' +
-      '<p>The suite’s tests are parameter tables, so two rows that are identical once the id and display ' +
-      'name are removed are one test billed twice — which also inflates the denominator of the dashboard ' +
-      'grade. Detection runs in two tiers: <strong>exact</strong> (every parameter matches) and ' +
-      '<strong>same invocation</strong> (the same argus call, differing only by container name). The second ' +
-      'tier is legitimate when a follow-on job asserts something extra, so a row can be annotated in place ' +
-      'with <span class="mono">// dry:allow &lt;reason&gt;</span> rather than the metric being tuned to ignore it.</p>';
-
-    function list(groups, cls) {
-      if (!groups || !groups.length) return '';
-      return groups.map(function (g) {
-        return '<div class="dupe"><span class="ids">' + esc(g.tests.join('  =  ')) + '</span>' +
-               '<div class="why">' + esc((g.where || []).join('  ·  ')) +
-               (g.allowed ? '<br><strong>allowed:</strong> ' + esc(g.allowed) : '') + '</div></div>';
-      }).join('');
-    }
-
-    var unexplained = (td.exact || []).concat(td.invocation || []);
-    if (unexplained.length) {
-      html += '<h3>Unexplained</h3>' + list(unexplained);
-    } else {
-      html += '<h3>Unexplained</h3><p class="ok">None. Every duplicate pairing found is annotated with a reason.</p>';
-    }
-    if ((td.exempted || []).length) {
-      html += '<h3>Annotated as deliberate</h3>' + list(td.exempted);
-    }
-  }
-
-  // ---- why these metrics ---------------------------------------------------
-  html += '<h2>Why these three</h2>' +
-    '<p>Most of the classical cleanliness canon is weaker than its reputation, so the list is short on ' +
-    'purpose. Each metric below is here because something measured it against an outcome that matters, ' +
-    'rather than against intuition.</p><table><thead><tr>' +
-    '<th>Metric</th><th>KISS/DRY</th><th>What it measures, and the caveat</th></tr></thead><tbody>';
-  Object.keys(CFG.metrics || {}).forEach(function (k) {
-    var m = CFG.metrics[k];
-    html += '<tr><td class="k">' + esc(m.label) + '</td><td>' + esc(m.kiss_dry) + '</td><td>' +
-            esc(m.what) + '<br><span style="color:var(--fg3)"><em>' + esc(m.caveat) + '</em></span></td></tr>';
-  });
-  html += '</tbody></table>';
-
-  html += '<h2>What is deliberately excluded</h2>' +
-    '<table><thead><tr><th>Metric</th><th>Why not</th></tr></thead><tbody>' +
-    '<tr class="excluded"><td class="k">Cyclomatic complexity</td><td>Correlates around 0.9 with raw line ' +
-    'count <a href="#ref-4">[4]</a>, so it largely re-measures size rather than adding evidence. The ' +
-    'methodological objection <a href="#ref-5">[5]</a> predates the correlation studies that confirmed it. ' +
-    'Recorded for provenance <a href="#ref-3">[3]</a>.</td></tr>' +
-    '<tr class="excluded"><td class="k">Halstead volume / effort</td><td>No dependable independent ' +
-    'predictive value once size is controlled for.</td></tr>' +
-    '<tr class="excluded"><td class="k">Maintainability Index</td><td>Its constants were fitted to a small ' +
-    'sample and never re-derived; the widely-shipped variant is ad hoc <a href="#ref-6">[6]</a>.</td></tr>' +
-    '<tr class="excluded"><td class="k">Chidamber &amp; Kemerer</td><td>Genuinely validated, but ' +
-    'object-oriented. This repository is Actions YAML and bash, so CBO, WMC and LCOM have nothing to bind ' +
-    'to. Not approximated by a stand-in.</td></tr>' +
+  // ---- why these, in a table rather than paragraphs ----------------------
+  html += '<h2>Why these metrics</h2><table><thead><tr><th>Metric</th><th></th>' +
+          '<th>Grounding</th></tr></thead><tbody>' +
+    '<tr><td class="k">Duplicated lines</td><td>DRY</td><td>Inconsistent changes to clones are a ' +
+      'measurable defect source <a href="#ref-1">[1]</a>. Type-1 and Type-2 only, so a low number ' +
+      'is weaker evidence than a high one.</td></tr>' +
+    '<tr><td class="k">Cognitive complexity</td><td>KISS</td><td>Validated against measured ' +
+      'comprehension time <a href="#ref-2">[2]</a>. Threshold 15 is SonarSource\u2019s default \u2014 ' +
+      'a convention, not a finding.</td></tr>' +
+    '<tr><td class="k">Duplicate test tuples</td><td>DRY</td><td>Local. PR #13 cut six tests found ' +
+      'this way by hand; a redundant test also inflates the denominator of the board\u2019s pass ' +
+      'rate.</td></tr>' +
+    '<tr class="excluded"><td class="k">Cyclomatic complexity</td><td></td><td>Correlates ~0.9 with ' +
+      'line count <a href="#ref-4">[4]</a><a href="#ref-5">[5]</a>, so it re-measures size. Excluded.</td></tr>' +
+    '<tr class="excluded"><td class="k">Halstead, Maintainability Index</td><td></td><td>No ' +
+      'dependable independent predictive value <a href="#ref-6">[6]</a>. Excluded.</td></tr>' +
+    '<tr class="excluded"><td class="k">Chidamber &amp; Kemerer</td><td></td><td>Validated, but ' +
+      'object-oriented; nothing here is. Excluded rather than approximated.</td></tr>' +
     '</tbody></table>';
 
-  // ---- references ----------------------------------------------------------
   html += '<h2>References</h2><div class="refs">' +
     (CFG.references || []).map(function (r) {
       return '<div class="ref" id="ref-' + r.n + '"><span class="n">[' + r.n + ']</span><span>' +
-             esc(r.ieee) + ' <a href="' + esc(r.url) + '">' + esc(r.url) + '</a>' +
-             (r.note ? '<span class="why">' + esc(r.note) + '</span>' : '') + '</span></div>';
+             esc(r.ieee) + ' <a href="' + esc(r.url) + '">' + esc(r.url) + '</a></span></div>';
     }).join('') + '</div>';
 
   $('body').innerHTML = html;
   $('foot').innerHTML =
-    'Measured on every suite run by <span class="mono">.github/scripts/cleanliness-metrics.sh</span>; ' +
-    'thresholds, prose and citations in <span class="mono">.github/data/cleanliness-metrics.json</span>. ' +
-    'Generated ' + esc(PAGE.date) + '. <a href="../">Summary</a> &middot; ' +
-    '<a href="../tests/">Test results</a>.';
+    'Measured by <span class="mono">.github/scripts/cleanliness-metrics.sh</span> on every run. ' +
+    '<a href="../">Summary</a> &middot; <a href="../tests/">Test results</a>.';
 })();
 </script>
 </body>

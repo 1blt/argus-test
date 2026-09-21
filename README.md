@@ -693,24 +693,35 @@ gated cleanliness number gets gamed rather than met. Two targets — this suite
 and argus — reported separately and never summed, so tidy tests cannot offset
 untidy source.
 
-| Metric | KISS/DRY | Why this one |
+| Metric | KISS/DRY | Grounding |
 |---|---|---|
-| Duplicated lines | DRY | Juergens et al. (ICSE 2009): it is not clones that hurt but **inconsistent changes** to them, which are a measurable defect source |
-| Cognitive complexity | KISS | Muñoz Barón, Wyrich & Wagner (ESEM 2020) validated it against measured **comprehension time**, which is what "simple" is supposed to mean |
-| Duplicate test tuples | DRY | Local, and the best-evidenced here: PR #13 cut six tests because R12 was byte-identical to R7 and C11–C13 restated C10 — found by hand |
+| Duplicated lines | DRY | Juergens et al. (ICSE 2009): inconsistent changes to clones are a measurable defect source |
+| Cognitive complexity | KISS | Muñoz Barón, Wyrich & Wagner (ESEM 2020): validated against measured comprehension time |
+| Duplicate test tuples | DRY | Local. PR #13 cut six tests found this way by hand |
 
-Cyclomatic complexity, Halstead and the Maintainability Index are deliberately
-**excluded**: cyclomatic complexity correlates ≈0.9 with raw line count
-(Graylin et al. 2009), so it largely re-measures size, and the other two have no
-dependable independent predictive value. Chidamber & Kemerer is validated but
-object-oriented, and this repository is YAML and bash.
+Cyclomatic complexity, Halstead and the Maintainability Index are **excluded**:
+the first correlates ≈0.9 with raw line count (Graylin et al. 2009) so it
+re-measures size, and the others have no dependable independent predictive
+value. Chidamber & Kemerer is validated but object-oriented, and nothing here
+is.
 
-The **rationale and the full IEEE citations render on the page itself**, not
-only in [`cleanliness-metrics.json`](.github/data/cleanliness-metrics.json) — a
-number whose justification sits in a file nobody opens is a number people argue
-with from memory. The page carries the measurements, the duplicate groups with
-their annotations, a table of what is excluded and why, and the six references
-with back-links.
+**The page leads with evidence.** Each figure is followed by the lines behind
+it — every clone group as `file:start–end ↔ file:start–end` with its token
+count, and each complex unit with the constructs that produced its score
+(`if ×3, while ×2, &&/|| ×3`). A number you cannot check is a number you have
+to take on trust, which is not what this suite is for.
+
+**There is no "not applicable".** Cognitive complexity used to report it for
+this suite, on the grounds that no implementation parses Actions YAML or shell.
+That was a cop-out — Campbell's rules are language-agnostic, and shell is what
+this repository is made of. It is measured directly now, with heredoc bodies
+excluded because to bash they are data, not control flow (counting them scored
+the embedded JavaScript and put `generate-dashboard.sh` at 1955).
+
+A metric that still cannot be produced renders as a **fault with its reason**,
+not a blank. A grey dash and a clean result look identical, and treating
+"nothing was measured" as "nothing is wrong" is the exact equivalence this
+suite exists to reject.
 
 Duplicate-tuple detection runs in two tiers — **exact** (every parameter
 matches) and **invocation** (the same argus call, differing only by container
