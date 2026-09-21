@@ -124,6 +124,20 @@ p { font-size:0.82rem; max-width:74ch; }
 .cl-t { color:var(--fg3); font-size:0.72rem; }
 .cl-w { color:var(--fg2); font-size:0.73rem; }
 .cl-eq { color:var(--fg3); }
+.cl-cols { border-top:1px solid var(--rule); }
+.cl-hd { display:grid; grid-template-columns:1fr 1fr; font-size:0.68rem; color:var(--fg3);
+         padding:7px 12px; background:var(--surface2); border-bottom:1px solid var(--rule); }
+.cl-scroll { overflow:auto; max-height:460px; }
+.cl-diff { width:100%; border-collapse:collapse;
+           font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+           font-size:0.68rem; line-height:1.5; }
+.cl-diff td { padding:0 8px; border:none; vertical-align:top; white-space:pre; }
+.cl-diff td.ln { width:1%; text-align:right; color:var(--fg3); user-select:none;
+                 border-right:1px solid var(--rule); opacity:.65; }
+.cl-diff td.cd { width:49%; color:var(--fg2); }
+.cl-diff tr.eq td.cd { background:var(--pass-bg); color:var(--pass-ink); }
+.cl-diff tr.df td.cd { background:var(--warn-bg); color:var(--warn-ink); }
+.cl-sum { font-size:0.7rem; color:var(--fg3); padding:8px 12px; border-top:1px solid var(--rule); }
 .cl-frag { margin:0; padding:12px 14px; border-top:1px solid var(--rule); background:var(--surface2);
            font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.7rem;
            line-height:1.5; color:var(--fg2); overflow-x:auto; white-space:pre;
@@ -275,10 +289,36 @@ __NAV_JS__
                      '<span class="cl-w">' + loc(key, x.a.file, x.a.start, x.a.end) +
                      ' <span class="cl-eq">=</span> ' +
                      loc(key, x.b.file, x.b.start, x.b.end) + '</span>';
-          var body = x.fragment
-            ? '<pre class="cl-frag">' + esc(x.fragment) + '</pre>'
-            : '<div class="more">The detector recorded no text for this group; ' +
-              'follow either range above.</div>';
+          // Both sides, aligned line for line, matches in green. A clone pair is
+          // the same length by construction, so index-wise alignment is right
+          // -- and for a Type-2 clone the handful of lines that DIFFER are the
+          // whole reason to look, so those are what stand out against the green.
+          var body;
+          if (x.aText && x.bText) {
+            var n = Math.max(x.aText.length, x.bText.length), same = 0, rows = '';
+            for (var i = 0; i < n; i++) {
+              var la = x.aText[i], lb = x.bText[i];
+              var eq = la === lb;
+              if (eq) { same++; }
+              rows += '<tr class="' + (eq ? 'eq' : 'df') + '">' +
+                      '<td class="ln">' + (x.a.start + i) + '</td>' +
+                      '<td class="cd">' + esc(la == null ? '' : la) + '</td>' +
+                      '<td class="ln">' + (x.b.start + i) + '</td>' +
+                      '<td class="cd">' + esc(lb == null ? '' : lb) + '</td></tr>';
+            }
+            body = '<div class="cl-cols"><div class="cl-hd">' +
+                     '<span>' + loc(key, x.a.file, x.a.start, x.a.end) + '</span>' +
+                     '<span>' + loc(key, x.b.file, x.b.start, x.b.end) + '</span></div>' +
+                   '<div class="cl-scroll"><table class="cl-diff"><tbody>' + rows +
+                   '</tbody></table></div><div class="cl-sum">' + same + ' of ' + n +
+                   ' lines identical' + (same === n ? '' : ' \u2014 ' + (n - same) + ' differ') +
+                   '</div></div>';
+          } else if (x.fragment) {
+            body = '<pre class="cl-frag">' + esc(x.fragment) + '</pre>';
+          } else {
+            body = '<div class="more">The detector recorded no text for this group; ' +
+                   'follow either range above.</div>';
+          }
           return '<details class="clone"><summary>' + head + '</summary>' + body + '</details>';
         }).join('') +
         (g.length > 12 ? '<div class="more">' + (g.length - 12) +
@@ -354,19 +394,17 @@ __NAV_JS__
     '<tr><td class="k">Duplicate test tuples</td><td>DRY</td><td>Local. PR #13 cut six tests found ' +
       'this way by hand; a redundant test also inflates the denominator of the pass ' +
       'rate.</td></tr>' +
-    '<tr class="excluded"><td class="k">Cyclomatic complexity</td><td></td><td>Correlates ~0.9 with ' +
-      'line count <a href="#ref-4">[4]</a><a href="#ref-5">[5]</a>, so it re-measures size. Excluded.</td></tr>' +
-    '<tr class="excluded"><td class="k">Halstead, Maintainability Index</td><td></td><td>No ' +
-      'dependable independent predictive value <a href="#ref-6">[6]</a>. Excluded.</td></tr>' +
-    '<tr class="excluded"><td class="k">Chidamber &amp; Kemerer</td><td></td><td>Validated, but ' +
-      'object-oriented; nothing here is. Excluded rather than approximated.</td></tr>' +
     '</tbody></table>';
 
   html += '<h2>References</h2><div class="refs">' +
-    (CFG.references || []).map(function (r) {
-      return '<div class="ref" id="ref-' + r.n + '"><span class="n">[' + r.n + ']</span><span>' +
-             esc(r.ieee) + ' <a href="' + esc(r.url) + '">' + esc(r.url) + '</a></span></div>';
-    }).join('') + '</div>';
+    // Only what the page cites, and the citation IS the link. Printing the
+    // raw URL beside it repeated the destination in a form nobody reads and
+    // made every entry twice as long.
+    (CFG.references || []).filter(function (r) { return r.n === 1 || r.n === 2; })
+      .map(function (r) {
+        return '<div class="ref" id="ref-' + r.n + '"><span class="n">[' + r.n + ']</span>' +
+               '<span><a href="' + esc(r.url) + '">' + esc(r.ieee) + '</a></span></div>';
+      }).join('') + '</div>';
 
   $('body').innerHTML = html;
   $('foot').innerHTML =

@@ -91,7 +91,52 @@ duplication() {
       # clone cannot dominate the page; the whole corpus is ~13 KB today.
       fragment: (.fragment // "" | .[0:6000])
     } ] | sort_by(-.lines)
-  }' "$tmp/jscpd-report.json"
+  }' "$tmp/jscpd-report.json" > "$tmp/groups.json"
+
+  # Pull BOTH sides out of the real files. jscpd's `fragment` is one side only
+  # -- enough to say "this text repeats", not enough to show what DIFFERS
+  # between the two copies, which for a Type-2 clone is the interesting part.
+  # The files are right here, so reading them is cheap.
+  python3 - "$root" "$tmp/groups.json" <<'PY'
+import json, pathlib, sys
+
+root = pathlib.Path(sys.argv[1])
+data = json.loads(pathlib.Path(sys.argv[2]).read_text())
+MAX_LINES = 140          # one pathological clone must not dominate the page
+
+def snippet(rel, start, end, length):
+    """Lines start..end of a file, tolerating a bad `end` from the detector.
+
+    jscpd reports `end` before `start` for some groups -- 207-41, 168-45 --
+    which silently dropped those pairs out of the side-by-side view. The clone
+    LENGTH is reported separately and is reliable, so derive the end from it
+    whenever the reported one does not make sense.
+    """
+    try:
+        lines = (root / rel).read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    lo = max(1, int(start))
+    hi = int(end)
+    if hi < lo:
+        hi = lo + max(0, int(length) - 1)
+    hi = min(len(lines), hi)
+    if lo > hi:
+        return None
+    return lines[lo - 1:hi][:MAX_LINES]
+
+for g in data.get("groups", []):
+    n = g.get("lines", 0)
+    a = snippet(g["a"]["file"], g["a"]["start"], g["a"]["end"], n)
+    b = snippet(g["b"]["file"], g["b"]["start"], g["b"]["end"], n)
+    if a is not None:
+        g["aText"] = a
+    if b is not None:
+        g["bText"] = b
+    g.pop("fragment", None)      # superseded by the two real sides
+
+print(json.dumps(data, separators=(",", ":")))
+PY
   rm -rf "$tmp"
 }
 
