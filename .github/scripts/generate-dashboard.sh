@@ -1524,9 +1524,15 @@ __NAV_JS__
     if (x.status === 'skip')   return 'Skipped: this test declined to run and did not say why. That is a gap in the test, not a result.';
     if (x.status === 'cancel') return 'Cancelled before it could report -- the run was superseded or stopped, so this is not a verdict either way.';
     if (x.status !== 'notrun') return '';
-    return x.scope && x.scope !== 'all'
-      ? 'Runs only when the suite is dispatched with scope=' + x.scope + '.'
-      : 'Not run in this scope.';
+    if (x.scope && x.scope !== 'all') {
+      return 'Runs only when the suite is dispatched with scope=' + x.scope + '.';
+    }
+    // "Not run in this scope" was circular when the scope WAS all: it restated
+    // the status and explained nothing. A test the suite defines, in a scope
+    // that should have run it, producing no result means the run never got to
+    // it -- which is a fact about the run, and worth saying.
+    return 'This scope should have run it, but the run reported no result \u2014 ' +
+           'its category most likely failed to start or was cancelled.';
   }
   function srcHref(x) {
     if (x.issue) return repoUrl + '/issues/' + x.issue;   // a gap points at its issue
