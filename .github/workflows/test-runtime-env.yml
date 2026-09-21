@@ -105,7 +105,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/grype/db
             ~/.cache/trivy
           # Unique per run so every run saves, with a prefix restore so every
           # run after the first starts from the previous one's databases.
@@ -113,16 +112,27 @@ jobs:
           restore-keys: |
             scannerdb-${{ runner.os }}-
 
-      - name: Install trivy and grype as plain binaries
+      # TRIVY ONLY, DELIBERATELY.
+      #
+      # `grype db update` failed four retries with escalating backoff on this
+      # runner -- systematic, not flaky -- and with grype in the default set
+      # and its database unobtainable, argus refusing the scan is CORRECT. The
+      # test then had no verdict to give, twice.
+      #
+      # Removing grype does not weaken the assertion, it widens it. N1 says an
+      # unrequested sub-scanner that cannot run here must not fail the scan.
+      # With grype absent, the default set contains one sub-scanner that works
+      # (trivy), one that needs no database (syft), and three that cannot run
+      # (grype, exposure, services) -- so the rule is now tested against three
+      # unavailable sub-scanners instead of two, with no dependency on a 200MB
+      # download that this runner cannot complete.
+      - name: Install trivy as a plain binary
         run: |
           set -euo pipefail
           mkdir -p "$HOME/scanbin"
           curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sh -s -- -b "$HOME/scanbin" v0.74.0
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-            | sh -s -- -b "$HOME/scanbin" v0.92.2
           "$HOME/scanbin/trivy" --version
-          "$HOME/scanbin/grype" version
 
       # WARM THE DATABASES, WITH RETRIES. The preflight kept reporting "grype
       # cannot complete a scan (database unavailable?)" and the test recorded
@@ -133,23 +143,15 @@ jobs:
         run: |
           set -uo pipefail
           export PATH="$HOME/scanbin:$PATH"
-          ok_grype=false
-          for i in 1 2 3 4; do
-            if grype db update; then ok_grype=true; break; fi
-            echo "::warning::grype db update attempt $i failed"; sleep $((i * 20))
-          done
           ok_trivy=false
           for i in 1 2 3 4; do
             if trivy image --download-db-only; then ok_trivy=true; break; fi
             echo "::warning::trivy db download attempt $i failed"; sleep $((i * 20))
           done
-          echo "grype db ready: $ok_grype   trivy db ready: $ok_trivy"
+          echo "trivy db ready: $ok_trivy"
           # Stop the scans re-fetching once the databases are in place; a
           # mid-scan refresh is what made this flaky in the first place.
-          {
-            echo "GRYPE_DB_AUTO_UPDATE=false"
-            echo "TRIVY_SKIP_DB_UPDATE=true"
-          } >> "$GITHUB_ENV"
+          echo "TRIVY_SKIP_DB_UPDATE=true" >> "$GITHUB_ENV"
 
       - name: Assert both halves of the split
         id: assert
@@ -198,27 +200,21 @@ jobs:
             echo "  $rt: absent (as required)"
           done
           echo "  trivy: $(command -v trivy)"
-          echo "  grype: $(command -v grype)"
 
           # PREFLIGHT. N1 asserts that sub-scanners the caller did NOT ask for
-          # cannot fail the scan. That only means anything if the ones that
-          # WERE asked for can run: if grype's database will not load, argus
-          # exiting non-zero is correct behaviour and N1 would be reporting a
-          # broken download as an argus defect. It did exactly that once.
+          # cannot fail the scan. That only means anything if at least one that
+          # CAN run does: with no working scanner at all, argus exiting
+          # non-zero is correct and N1 would be reporting a broken download as
+          # an argus defect. It did exactly that once.
           PRE_OK=true
-          for sc in trivy grype; do
-            if ! "$sc" version >/dev/null 2>&1 && ! "$sc" --version >/dev/null 2>&1; then
-              echo "::warning::$sc is not runnable"; PRE_OK=false; continue
-            fi
-          done
+          if ! trivy --version >/dev/null 2>&1; then
+            echo "::warning::trivy is not runnable"; PRE_OK=false
+          fi
           # A real scan of a tiny image is the only honest check that the
           # database is usable; --version says nothing about it.
           if [ "$PRE_OK" = "true" ]; then
             if ! trivy image --quiet --scanners vuln --format json alpine:3.18 >/dev/null 2>&1; then
               echo "::warning::trivy cannot complete a scan (database unavailable?)"; PRE_OK=false
-            fi
-            if ! grype alpine:3.18 -o json >/dev/null 2>&1; then
-              echo "::warning::grype cannot complete a scan (database unavailable?)"; PRE_OK=false
             fi
           fi
           if [ "$PRE_OK" != "true" ]; then
@@ -226,11 +222,11 @@ jobs:
             {
               echo "n1=skip"
               echo "n2=skip"
-              echo "reason=A requested scanner (trivy or grype) could not complete a scan on this runner, usually a failed vulnerability-database download. argus refusing the scan is correct in that case, so this test could not isolate the behaviour it asserts."
+              echo "reason=trivy could not complete a scan on this runner, usually a failed vulnerability-database download. With no working scanner, argus refusing the scan is correct, so this test could not isolate the behaviour it asserts."
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "  preflight: both scanners complete a real scan"
+          echo "  preflight: trivy completes a real scan"
 
           N1=FAIL
           N2=FAIL
@@ -249,7 +245,7 @@ jobs:
           tail -40 n1.log
 
           if [ "$N1_RC" -ne 0 ]; then
-            echo "::error title=N1::A default container scan exited $N1_RC on a host with trivy and grype but no container runtime. Sub-scanners the caller never asked for must not fail the scan (ADR-039): a rootless or hardened runner would fail every scan and the gate would be switched off. Expected 0."
+            echo "::error title=N1::A default container scan exited $N1_RC on a host where trivy works and grype, exposure and services cannot run. Sub-scanners the caller never asked for must not fail the scan (ADR-039): a rootless or hardened runner would fail every scan and the gate would be switched off. Expected 0."
           elif ! grep -qiE '(exposure|services)' n1.log; then
             echo "::error title=N1::The scan exited 0, but neither 'exposure' nor 'services' is named in the output. They could not run here, and a reduced scan that does not say so is indistinguishable from a full one."
           else
@@ -650,7 +646,7 @@ jobs:
             --arg n5 "$(half "$N5_RAW" "$N5")" \
             --arg n5why "$N5_WHY" \
             '[
-              {"id":"N1","name":"daemonless default scan","detail":"Does a default container scan still exit 0 on a runner with trivy and grype but no container runtime, naming the sub-scanners that could not run?","status":$n1,"reason":$pairwhy},
+              {"id":"N1","name":"daemonless default scan","detail":"Does a default container scan still exit 0 when only some of the default sub-scanners can run here, naming the ones that could not?","status":$n1,"reason":$pairwhy},
               {"id":"N2","name":"daemonless explicit request","detail":"Does an explicitly requested sub-scanner that cannot run on this host exit non-zero rather than reporting success?","status":$n2,"reason":$pairwhy},
               {"id":"N3","name":"unscannable image exit code","detail":"Does argus exit 2, distinct from 1, when an image cannot be pulled and nothing could be scanned?","status":$n3},
               {"id":"N4","name":"retry platform is published","detail":"Does a failed pull retry against a platform the manifest publishes rather than hardcoding linux/amd64?","status":$n4,"reason":$n4why},
