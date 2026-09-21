@@ -113,6 +113,21 @@ p { font-size:0.82rem; max-width:74ch; }
 .flabel { font-size:0.6rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;
           border:1px solid var(--warn-ink); padding:0 5px; margin-right:8px; }
 .clean { font-size:0.78rem; color:var(--pass-ink); margin:6px 0 10px; }
+.clone { border:1px solid var(--border); margin:6px 0; background:var(--surface); }
+.clone summary { cursor:pointer; padding:9px 12px; font-size:0.76rem; display:flex;
+                 gap:14px; align-items:baseline; flex-wrap:wrap; list-style:none; }
+.clone summary::-webkit-details-marker { display:none; }
+.clone summary::before { content:'\25b8'; color:var(--fg3); font-size:0.7rem; }
+.clone[open] summary::before { content:'\25be'; }
+.clone summary:hover { background:var(--surface2); }
+.cl-n { font-weight:700; color:var(--fg); font-variant-numeric:tabular-nums; }
+.cl-t { color:var(--fg3); font-size:0.72rem; }
+.cl-w { color:var(--fg2); font-size:0.73rem; }
+.cl-eq { color:var(--fg3); }
+.cl-frag { margin:0; padding:12px 14px; border-top:1px solid var(--rule); background:var(--surface2);
+           font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.7rem;
+           line-height:1.5; color:var(--fg2); overflow-x:auto; white-space:pre;
+           max-height:420px; overflow-y:auto; }
 td.num { font-variant-numeric:tabular-nums; color:var(--fg); font-weight:600; }
 tr.over td.num { color:var(--warn-ink); }
 .unit { color:var(--fg3); }
@@ -149,8 +164,8 @@ footer { margin-top:44px; padding-top:18px; border-top:1px solid var(--border);
 <body>
 <div class="wrap">
   <div class="nav" id="nav"></div>
-  <h1><img class="eye" src="../favicon.png" alt="" aria-hidden="true">Code cleanliness</h1>
-  <div class="meta" id="meta"></div>
+  <div class="phead" id="phead"></div>
+  <div class="pmeta" id="meta"></div>
   <p class="lede" id="lede"></p>
   <div id="body"></div>
   <footer id="foot"></footer>
@@ -207,33 +222,16 @@ __NAV_JS__
     return '<a href="' + base + esc(f) + frag + '">' + text + '</a>';
   }
 
-  // Branch, version, commit and time -- for BOTH repositories, because this
-  // page measures two of them and a single commit would not say which. Same
-  // rule as the board: the label is human, the href is immutable, and the SHA
-  // is visible text rather than a tooltip.
+  // The same header the board uses, from site-nav.sh.
+  renderHeader({
+    el: 'phead', metaEl: 'meta', title: 'Code cleanliness', up: '../',
+    branch: PAGE.branch,
+    selfRepo: PAGE.selfRepo, selfSha: PAGE.selfSha,
+    argusRepo: PAGE.argusRepo, argusRef: PAGE.argusRef,
+    argusSha: PAGE.argusSha, argusVersion: PAGE.argusVersion,
+    date: PAGE.date, runUrl: PAGE.runUrl
+  });
   var SRV = (PAGE.runUrl || 'https://github.com').split('/').slice(0, 3).join('/');
-  function sha(repo, full, label) {
-    if (!full || full === 'unknown') return '';
-    return ' <a class="mono" href="' + SRV + '/' + repo + '/commit/' + esc(full) +
-           '" title="exact commit -- this link cannot move">' +
-           esc(String(full).slice(0, 7)) + '</a>';
-  }
-  var m = [];
-  if (PAGE.branch) m.push('branch <span class="mono">' + esc(PAGE.branch) + '</span>');
-  if (PAGE.selfRepo) {
-    m.push('suite' + (sha(PAGE.selfRepo, PAGE.selfSha) || ' <span class="mono">(sha unknown)</span>'));
-  }
-  if (PAGE.argusRepo) {
-    var onMain = (PAGE.argusRef || 'main') === 'main';
-    m.push((onMain && PAGE.argusVersion
-        ? '<a href="' + SRV + '/' + PAGE.argusRepo + '/releases/tag/' + esc(PAGE.argusVersion) +
-          '">argus <span class="mono">v' + esc(PAGE.argusVersion) + '</span></a>'
-        : 'argus <span class="mono">' + esc(PAGE.argusRef || 'main') + '</span>') +
-      (sha(PAGE.argusRepo, PAGE.argusSha) || ' <span class="mono">(sha unknown)</span>'));
-  }
-  m.push(esc(PAGE.date));
-  if (PAGE.runUrl) m.push('<a href="' + esc(PAGE.runUrl) + '">view run &#8599;</a>');
-  $('meta').innerHTML = m.join('<span class="sep">&middot;</span>');
 
   $('lede').innerHTML =
     'Reported, never gated. Every figure is followed by the lines behind it.';
@@ -266,14 +264,25 @@ __NAV_JS__
               esc(d.total_lines) + ' lines</span></div>';
       var g = d.groups || [];
       if (g.length) {
-        html += '<table><thead><tr><th>Lines</th><th>Tokens</th><th>Here</th>' +
-                '<th>Is repeated at</th></tr></thead><tbody>' +
-          g.slice(0, 12).map(function (x) {
-            return '<tr><td>' + esc(x.lines) + '</td><td>' + esc(x.tokens) + '</td>' +
-                   '<td>' + loc(key, x.a.file, x.a.start, x.a.end) + '</td>' +
-                   '<td>' + loc(key, x.b.file, x.b.start, x.b.end) + '</td></tr>';
-          }).join('') + '</tbody></table>' +
-          (g.length > 12 ? '<div class="more">' + (g.length - 12) + ' further group(s) not shown.</div>' : '');
+        // Each group expands to the duplicated text. jscpd already produces
+        // the fragment and it was being discarded, so the page asserted that
+        // two ranges match without ever showing WHAT matches -- leaving the
+        // reader to open two tabs and diff by eye. Collapsed by default: the
+        // list is for scanning, the text is for the one you care about.
+        html += g.slice(0, 12).map(function (x) {
+          var head = '<span class="cl-n">' + esc(x.lines) + ' lines</span>' +
+                     '<span class="cl-t">' + esc(x.tokens) + ' tokens</span>' +
+                     '<span class="cl-w">' + loc(key, x.a.file, x.a.start, x.a.end) +
+                     ' <span class="cl-eq">=</span> ' +
+                     loc(key, x.b.file, x.b.start, x.b.end) + '</span>';
+          var body = x.fragment
+            ? '<pre class="cl-frag">' + esc(x.fragment) + '</pre>'
+            : '<div class="more">The detector recorded no text for this group; ' +
+              'follow either range above.</div>';
+          return '<details class="clone"><summary>' + head + '</summary>' + body + '</details>';
+        }).join('') +
+        (g.length > 12 ? '<div class="more">' + (g.length - 12) +
+                         ' further group(s) not shown.</div>' : '');
       } else {
         html += '<div class="clean">No clone group reached the 5-line / 50-token floor.</div>';
       }

@@ -39,29 +39,59 @@ duplication() {
   fi
 
   local tmp; tmp=$(mktemp -d)
-  if npx --yes jscpd@4 "${present[@]}" \
-        --min-lines 5 --min-tokens 50 \
-        --reporters json --output "$tmp" --silent >/dev/null 2>&1 \
-     && [ -f "$tmp/jscpd-report.json" ]; then
-    # The clone LOCATIONS are the point. A percentage is a claim; the file and
-    # line range of each pair is the evidence for it, and it is what someone
-    # has to open to decide whether the duplication matters.
-    jq -c --arg root "$root" '{
-      percent:   (.statistics.total.percentage // null),
-      clones:    (.statistics.total.clones // null),
-      duplicated_lines: (.statistics.total.duplicatedLines // null),
-      total_lines:      (.statistics.total.lines // null),
-      groups: [ .duplicates[]? | {
-        lines:  .lines,
-        tokens: .tokens,
-        format: .format,
-        a: { file: (.firstFile.name  | sub("^" + $root + "/"; "")), start: .firstFile.start,  end: .firstFile.end },
-        b: { file: (.secondFile.name | sub("^" + $root + "/"; "")), start: .secondFile.start, end: .secondFile.end }
-      } ] | sort_by(-.lines)
-    }' "$tmp/jscpd-report.json"
-  else
-    echo '{"error":"the clone detector exited non-zero or produced no report"}'
+  # jscpd EXITS 0 AND WRITES NO REPORT when it finds nothing. Gating on the
+  # report's existence therefore reported "no duplication" as a broken metric
+  # -- the exact conflation of "we did not look" with "there is nothing there"
+  # that this page refuses to make anywhere else. The exit code and the report
+  # are now separate signals: non-zero is a fault, zero with no report is a
+  # clean zero, and stderr is carried into the fault so it says something
+  # useful instead of guessing.
+  local rc=0
+  npx --yes jscpd@4 "${present[@]}" \
+      --min-lines 5 --min-tokens 50 \
+      --reporters json --output "$tmp" --silent >"$tmp/out" 2>"$tmp/err" || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    jq -n -c --arg why "$(tr '\n' ' ' < "$tmp/err" | cut -c1-300)" --arg rc "$rc" \
+      '{error: ("the clone detector exited " + $rc + (if $why | length > 0 then ": " + $why else "" end))}'
+    rm -rf "$tmp"
+    return
   fi
+
+  if [ ! -f "$tmp/jscpd-report.json" ]; then
+    # Ran cleanly and produced nothing: there is no duplication to report.
+    # present[] holds directories, so count through find rather than cat.
+    local total
+    total=$(find "${present[@]}" -type f \( -name '*.py' -o -name '*.sh' -o -name '*.yml' \) \
+             -exec cat {} + 2>/dev/null | wc -l | tr -d ' ')
+    jq -n -c --argjson total "${total:-0}" \
+      '{percent: 0, clones: 0, duplicated_lines: 0, total_lines: $total, groups: []}'
+    rm -rf "$tmp"
+    return
+  fi
+
+  # The clone LOCATIONS are the point. A percentage is a claim; the file and
+  # line range of each pair is the evidence for it, and it is what someone
+  # has to open to decide whether the duplication matters.
+  jq -c --arg root "$root" '{
+    percent:   (.statistics.total.percentage // null),
+    clones:    (.statistics.total.clones // null),
+    duplicated_lines: (.statistics.total.duplicatedLines // null),
+    total_lines:      (.statistics.total.lines // null),
+    groups: [ .duplicates[]? | {
+      lines:  .lines,
+      tokens: .tokens,
+      format: .format,
+      a: { file: (.firstFile.name  | sub("^" + $root + "/"; "")), start: .firstFile.start,  end: .firstFile.end },
+      b: { file: (.secondFile.name | sub("^" + $root + "/"; "")), start: .secondFile.start, end: .secondFile.end },
+      # The duplicated text itself. jscpd already produces it and it was
+      # being thrown away, which left the page asserting that two ranges
+      # match without ever showing what matches -- the reader had to open two
+      # GitHub tabs and diff by eye. Capped per group so one pathological
+      # clone cannot dominate the page; the whole corpus is ~13 KB today.
+      fragment: (.fragment // "" | .[0:6000])
+    } ] | sort_by(-.lines)
+  }' "$tmp/jscpd-report.json"
   rm -rf "$tmp"
 }
 

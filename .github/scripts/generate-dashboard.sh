@@ -783,10 +783,10 @@ footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border
 <div class="container">
   <div class="nav" id="nav"></div>
   <header>
-    <h1><img class="eye" src="__UP__favicon.png" alt="" aria-hidden="true">Argus Test Suite</h1>
-    <div class="head-meta" id="head-meta"></div>
+    <div class="phead" id="phead"></div>
     <button class="theme-toggle" id="theme-toggle" type="button" title="Switch theme"></button>
   </header>
+  <div class="pmeta" id="head-meta"></div>
 
   <section class="card hero">
     <div class="hero-plots">
@@ -903,83 +903,20 @@ __NAV_JS__
 
   // ---------------------------------------------------------------- header
   var meta = [];
-  // WHICH URL FORM. Three are available and they are not interchangeable:
+  // One shared header for both pages -- same markup, same metadata, same type
+  // scale. They had grown separate ones weeks apart, and two pages a click
+  // apart should not look like two products. See site-nav.sh.
   //
-  //   commit SHA  the only true identity, and the only one that cannot move.
-  //               Unreadable on its own.
-  //   release tag readable, immutable by convention, and the thing a consumer
-  //               would actually pin. Can still be force-moved, so it is a
-  //               label rather than proof.
-  //   branch      readable, and purely mutable. /tree/<branch> showed whatever
-  //               the branch became, and 404s once a PR branch is deleted --
-  //               which is the normal end state for every ref this suite is
-  //               pointed at. It was the primary link here; it is now gone.
-  //
-  // So: the LABEL is whatever a human recognises, and the HREF is always the
-  // most specific immutable object. The short SHA is rendered as visible text
-  // rather than a tooltip, because a tooltip does not survive a screenshot, a
-  // copy-paste or a touch device, and the SHA is the only thing that fully
-  // identifies what ran.
-  if (d.argusRepo) {
-    const base = server + '/' + d.argusRepo;
-    const onMain = (d.argusRef || 'main') === 'main';
-    const known = d.argusSha && d.argusSha !== 'unknown';
-    // On main every push cuts a release, so the version names the same code the
-    // commit does; it links to the tag because that is what a consumer pins.
-    // On any other ref a version number would be a lie -- the branch predates
-    // or postdates the release it reports -- so the ref name is plain text.
-    const label = (onMain && d.argusVersion)
-      ? '<a href="' + base + '/releases/tag/' + esc(d.argusVersion) +
-        '" title="the release a consumer would pin">argus <span class="mono">v' +
-        esc(d.argusVersion) + '</span></a>'
-      : 'argus <span class="mono">' + esc(d.argusRef || 'main') + '</span>';
-    meta.push(label + (known
-      ? ' <a class="mono" href="' + base + '/commit/' + d.argusSha +
-        '" title="the exact commit under test -- this link cannot move">' +
-        esc(d.argusShaShort) + '</a>'
-      : ' <span class="mono" title="commit could not be resolved">(sha unknown)</span>'));
-  }
-  // WHAT THIS RUN ACTUALLY EXECUTED, when it is not what the ref implies.
-  //
-  // Referencing container-scan.yml at a branch gets that branch's workflow
-  // files, but setup-argus is pinned inside them, so the argus Python package
-  // comes from a release instead. The reader needs to know that the Python was
-  // not the branch's -- they do not need the words "YAML" or "SDK" to be told
-  // it, which is what the previous chip said and what nobody could parse.
-  //
-  // Suppressed when the pin matches the version already shown. On main at
-  // v1.12.5 the chip said "SDK 1.12.5" beside "argus v1.12.5": the same number
-  // twice, warning about nothing. It earns space only when the two disagree,
-  // which is exactly the case worth flagging.
-  if (d.liveness && d.liveness.summary) {
-    const L = d.liveness.summary;
-    const pins = (L.sdk_pins || []).join(', ');
-    const shown = (d.argusRef || 'main') === 'main' ? (d.argusVersion || '') : '';
-    if (L.sdk_live === false && pins && pins !== shown) {
-      const tip = 'This run used the workflow files from ' + (L.ref || 'this ref') +
-        ', but the argus Python package came from release ' + pins +
-        ' \u2014 setup-argus is pinned inside those workflow files, so it installs from the ' +
-        'release rather than the ref. ' + L.stale_nested + ' of ' +
-        (L.stale_nested + L.live_nested) + ' nested references are pinned this way. ' +
-        'Python behaviour is covered instead by the Runtime Environment tests (N1\u2013N5), ' +
-        'which check argus out at the ref and run the CLI directly.';
-      const ver = (pins.indexOf(',') === -1)
-        ? '<a class="mono" href="' + server + '/' + d.argusRepo + '/releases/tag/' + esc(pins) +
-          '">v' + esc(pins) + '</a>'
-        : '<span class="mono">' + esc(pins) + '</span>';
-      meta.push('<span class="chip chip-warn" title="' + esc(tip) +
-                '">Python from ' + ver + ', not this ref</span>');
-    } else if (L.sdk_live === true) {
-      meta.push('<span class="chip chip-ok" title="Workflow files and the Python package both come from this ref.">fully branch-live</span>');
-    }
-  }
-  meta.push(esc(d.date));
-  meta.push('scope <span class="mono">' + esc(d.scope) + '</span>');
-  if (d.cleanliness) {
-    meta.push('<a href="__UP__code-cleanliness/">code cleanliness</a>');
-  }
-  meta.push('<a href="' + d.runUrl + '">view run &#8599;</a>');
-  $('head-meta').innerHTML = meta.join('<span class="sep">&middot;</span>');
+  // No "code cleanliness" link here: the nav tabs above already offer it, and
+  // a second route to the same page in the metadata line was just noise.
+  renderHeader({
+    el: 'phead', metaEl: 'head-meta', title: 'Argus Test Suite', up: '__UP__',
+    branch: d.branchName || d.branchSlug,
+    selfRepo: d.repo, selfSha: d.selfSha,
+    argusRepo: d.argusRepo, argusRef: d.argusRef,
+    argusSha: d.argusSha, argusVersion: d.argusVersion,
+    liveness: d.liveness, date: d.date, scope: d.scope, runUrl: d.runUrl
+  });
 
   // ---------------------------------------------------------------- corpus
   const ran = {};
