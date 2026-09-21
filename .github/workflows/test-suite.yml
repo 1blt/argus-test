@@ -958,6 +958,7 @@ jobs:
           BRANCH: ${{ env.branch_dir }}
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
           ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
+          ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
           ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/generate-summary-index.sh

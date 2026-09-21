@@ -431,7 +431,23 @@ header { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; margi
 header h1 {
   margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--fg);
   text-transform: uppercase; letter-spacing: 0.12em;
+  display: flex; align-items: center;
 }
+/* Argus's eye beside the title. Grayscaled deliberately: it is a mark, not a
+   status light, and the page already spends colour on severity -- a green eye
+   next to a red risk number competes with the one signal that should carry it.
+   The source is the same 32x32 PNG used as the favicon, so nothing extra is
+   fetched. Slightly darkened in light mode: the green grayscales to about
+   #a1a1a1, which sits well on near-black but is weak on white.
+   aria-hidden because the title beside it already says the name. */
+.eye { height: 1.2em; width: auto; vertical-align: -0.2em; margin-right: 0.55em;
+       filter: grayscale(1) brightness(0.72); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .eye { filter: grayscale(1) brightness(1.05); }
+}
+:root[data-theme="dark"] .eye { filter: grayscale(1) brightness(1.05); }
+:root[data-theme="light"] .eye { filter: grayscale(1) brightness(0.72); }
+
 .head-meta { margin-left: auto; font-size: 0.78rem; color: var(--fg3); display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; }
 .head-meta .sep { color: var(--border); }
 .head-meta a { border-bottom: 0; }
@@ -760,7 +776,7 @@ footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border
 <body>
 <div class="container">
   <header>
-    <h1>Argus Test Suite</h1>
+    <h1><img class="eye" src="__UP__favicon.png" alt="" aria-hidden="true">Argus Test Suite</h1>
     <div class="head-meta" id="head-meta"></div>
     <button class="theme-toggle" id="theme-toggle" type="button" title="Switch theme"></button>
   </header>
@@ -873,25 +889,41 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
 
   // ---------------------------------------------------------------- header
   var meta = [];
-  // On main, every push cuts a release, so the ref, the version and the commit
-  // all say the same thing -- collapse to the version and keep the exact commit
-  // in the link target and tooltip so no precision is lost. On any other ref a
-  // version number would be a lie (the branch predates or postdates the release
-  // it reports), so fall back to naming the ref and its commit.
+  // WHICH URL FORM. Three are available and they are not interchangeable:
+  //
+  //   commit SHA  the only true identity, and the only one that cannot move.
+  //               Unreadable on its own.
+  //   release tag readable, immutable by convention, and the thing a consumer
+  //               would actually pin. Can still be force-moved, so it is a
+  //               label rather than proof.
+  //   branch      readable, and purely mutable. /tree/<branch> showed whatever
+  //               the branch became, and 404s once a PR branch is deleted --
+  //               which is the normal end state for every ref this suite is
+  //               pointed at. It was the primary link here; it is now gone.
+  //
+  // So: the LABEL is whatever a human recognises, and the HREF is always the
+  // most specific immutable object. The short SHA is rendered as visible text
+  // rather than a tooltip, because a tooltip does not survive a screenshot, a
+  // copy-paste or a touch device, and the SHA is the only thing that fully
+  // identifies what ran.
   if (d.argusRepo) {
+    const base = server + '/' + d.argusRepo;
     const onMain = (d.argusRef || 'main') === 'main';
     const known = d.argusSha && d.argusSha !== 'unknown';
-    if (onMain && d.argusVersion) {
-      const el = '<a href="' + server + '/' + d.argusRepo + '/releases/tag/' + esc(d.argusVersion) + '"' +
-                 (known ? ' title="commit ' + esc(d.argusShaShort) + '"' : '') +
-                 '>argus <span class="mono">v' + esc(d.argusVersion) + '</span></a>';
-      meta.push(el);
-    } else if (known) {
-      meta.push('<a href="' + server + '/' + d.argusRepo + '/tree/' + esc(d.argusRef) + '">argus@' + esc(d.argusRef) + '</a>' +
-                ' <a class="mono" href="' + server + '/' + d.argusRepo + '/commit/' + d.argusSha + '">' + esc(d.argusShaShort) + '</a>');
-    } else {
-      meta.push('argus@' + esc(d.argusRef || 'main'));
-    }
+    // On main every push cuts a release, so the version names the same code the
+    // commit does; it links to the tag because that is what a consumer pins.
+    // On any other ref a version number would be a lie -- the branch predates
+    // or postdates the release it reports -- so the ref name is plain text.
+    const label = (onMain && d.argusVersion)
+      ? '<a href="' + base + '/releases/tag/' + esc(d.argusVersion) +
+        '" title="the release a consumer would pin">argus <span class="mono">v' +
+        esc(d.argusVersion) + '</span></a>'
+      : 'argus <span class="mono">' + esc(d.argusRef || 'main') + '</span>';
+    meta.push(label + (known
+      ? ' <a class="mono" href="' + base + '/commit/' + d.argusSha +
+        '" title="the exact commit under test -- this link cannot move">' +
+        esc(d.argusShaShort) + '</a>'
+      : ' <span class="mono" title="commit could not be resolved">(sha unknown)</span>'));
   }
   // What of this ref is actually under test. A branch run gets the branch's
   // workflow YAML, but nested actions -- including setup-argus, which installs
@@ -907,6 +939,14 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
             L.stale_nested + ' pinned vs ' + L.live_nested + ' live. setup-argus installs the SDK from its own checkout, so the Python under test is ' + pins +
             '. SDK-level behaviour is covered by the Runtime Environment tests (N1-N5), which check argus out at the ref.') +
         '">YAML from ref &middot; SDK <span class="mono">' + esc(pins) + '</span></span>');
+      // The SDK pin is the other half of what ran. Link it to its release so
+      // the reader can reach the Python that was actually installed.
+      if ((L.sdk_pins || []).length === 1) {
+        meta.push('<a class="mono" href="' + server + '/' + d.argusRepo +
+                  '/releases/tag/' + esc(L.sdk_pins[0]) +
+                  '" title="the SDK release actually installed by setup-argus">sdk ' +
+                  esc(L.sdk_pins[0]) + '</a>');
+      }
     } else if (L.sdk_live === true) {
       meta.push('<span class="chip chip-ok" title="Workflow YAML and SDK both resolve to this ref.">fully branch-live</span>');
     }

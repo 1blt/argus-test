@@ -145,7 +145,22 @@ body { font-family:"Nunito Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",san
 a { color:inherit; }
 .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.92em; }
 h1 { font-size:1.15rem; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
-     color:var(--fg); margin:0 0 6px; }
+     color:var(--fg); margin:0 0 6px; display:flex; align-items:center; }
+/* Argus's eye beside the title. Grayscaled deliberately: it is a mark, not a
+   status light, and the page already spends colour on severity -- a green eye
+   next to a red risk number competes with the one signal that should carry it.
+   The source is the same 32x32 PNG used as the favicon, so nothing extra is
+   fetched. Slightly darkened in light mode: the green grayscales to about
+   #a1a1a1, which sits well on near-black but is weak on white.
+   aria-hidden because the title beside it already says the name. */
+.eye { height: 1.2em; width: auto; vertical-align: -0.2em; margin-right: 0.55em;
+       filter: grayscale(1) brightness(0.72); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .eye { filter: grayscale(1) brightness(1.05); }
+}
+:root[data-theme="dark"] .eye { filter: grayscale(1) brightness(1.05); }
+:root[data-theme="light"] .eye { filter: grayscale(1) brightness(0.72); }
+
 .meta { font-size:0.76rem; color:var(--fg3); margin-bottom:30px; }
 .meta .sep { margin:0 8px; opacity:0.5; }
 .meta a { color:inherit; }
@@ -186,7 +201,7 @@ footer { margin-top:40px; padding-top:18px; border-top:1px solid var(--border);
 </head>
 <body>
 <div class="wrap">
-  <h1>Argus Test Suite</h1>
+  <h1><img class="eye" src="favicon.png" alt="" aria-hidden="true">Argus Test Suite</h1>
   <div class="meta" id="meta"></div>
   <div id="verdict"></div>
   <div class="cards" id="cards"></div>
@@ -207,6 +222,7 @@ const HEAD = $HEAD_JSON;"
   echo "  branch: \"${BRANCH:-}\","
   echo "  argusRef: \"${ARGUS_REF:-}\","
   echo "  argusRepo: \"${ARGUS_REPO:-}\","
+  echo "  argusSha: \"${ARGUS_SHA:-}\","
   echo "  argusVersion: \"${ARGUS_VERSION:-}\","
   echo "  runUrl: \"${RUN_URL:-}\""
   echo "};"
@@ -224,14 +240,25 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
   // ---- header --------------------------------------------------------------
   var m = [];
   if (PAGE.branch) m.push('branch <span class="mono">' + esc(PAGE.branch) + '</span>');
+  // Same rule as the board: the label is what a human recognises, the href is
+  // the most specific immutable object. Never /tree/<branch> -- it shows
+  // whatever the branch became, and 404s once the PR branch is deleted, which
+  // is the normal end state for every ref this suite is pointed at.
   if (PAGE.argusRepo && PAGE.argusRef) {
     var server = (PAGE.runUrl || 'https://github.com').split('/').slice(0, 3).join('/');
+    var base = server + '/' + PAGE.argusRepo;
     var onMain = PAGE.argusRef === 'main';
-    m.push(onMain && PAGE.argusVersion
-      ? '<a href="' + server + '/' + PAGE.argusRepo + '/releases/tag/' + esc(PAGE.argusVersion) +
-        '">argus <span class="mono">v' + esc(PAGE.argusVersion) + '</span></a>'
-      : '<a href="' + server + '/' + PAGE.argusRepo + '/tree/' + esc(PAGE.argusRef) + '">argus@' +
-        esc(PAGE.argusRef) + '</a>');
+    var known = PAGE.argusSha && PAGE.argusSha !== 'unknown';
+    m.push((onMain && PAGE.argusVersion
+      ? '<a href="' + base + '/releases/tag/' + esc(PAGE.argusVersion) +
+        '" title="the release a consumer would pin">argus <span class="mono">v' +
+        esc(PAGE.argusVersion) + '</span></a>'
+      : 'argus <span class="mono">' + esc(PAGE.argusRef) + '</span>') +
+      (known
+        ? ' <a class="mono" href="' + base + '/commit/' + esc(PAGE.argusSha) +
+          '" title="the exact commit under test -- this link cannot move">' +
+          esc(String(PAGE.argusSha).slice(0, 7)) + '</a>'
+        : ''));
   }
   // The liveness split belongs on the hub, not only on the dashboard: both
   // child pages were measured against this ref, and for a branch the label is

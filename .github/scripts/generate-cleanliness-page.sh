@@ -88,7 +88,22 @@ a:hover { color:var(--fg); }
 .back { font-size:0.74rem; text-transform:uppercase; letter-spacing:var(--track); font-weight:700;
         color:var(--fg3); display:inline-block; margin-bottom:18px; }
 h1 { font-size:1.15rem; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
-     color:var(--fg); margin:0 0 6px; }
+     color:var(--fg); margin:0 0 6px; display:flex; align-items:center; }
+/* Argus's eye beside the title. Grayscaled deliberately: it is a mark, not a
+   status light, and the page already spends colour on severity -- a green eye
+   next to a red risk number competes with the one signal that should carry it.
+   The source is the same 32x32 PNG used as the favicon, so nothing extra is
+   fetched. Slightly darkened in light mode: the green grayscales to about
+   #a1a1a1, which sits well on near-black but is weak on white.
+   aria-hidden because the title beside it already says the name. */
+.eye { height: 1.2em; width: auto; vertical-align: -0.2em; margin-right: 0.55em;
+       filter: grayscale(1) brightness(0.72); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .eye { filter: grayscale(1) brightness(1.05); }
+}
+:root[data-theme="dark"] .eye { filter: grayscale(1) brightness(1.05); }
+:root[data-theme="light"] .eye { filter: grayscale(1) brightness(0.72); }
+
 .meta { font-size:0.76rem; color:var(--fg3); margin-bottom:26px; }
 .meta .sep { margin:0 8px; opacity:0.5; }
 .lede { font-size:0.9rem; color:var(--fg2); max-width:74ch; margin:0 0 10px; }
@@ -128,7 +143,7 @@ footer { margin-top:44px; padding-top:18px; border-top:1px solid var(--border);
 <body>
 <div class="wrap">
   <a class="back" href="../">&larr; Summary</a>
-  <h1>Code cleanliness</h1>
+  <h1><img class="eye" src="../favicon.png" alt="" aria-hidden="true">Code cleanliness</h1>
   <div class="meta" id="meta"></div>
   <p class="lede" id="lede"></p>
   <div id="body"></div>

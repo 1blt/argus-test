@@ -31,6 +31,13 @@ FALLBACK="${FALLBACK:-main}"
 
 touch "$SITE_DIR/.nojekyll"
 
+# The root needs its own copy: it previously pointed its tab icon at
+# <first-branch>/favicon.png, which breaks the moment that branch stops
+# publishing.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+FAVICON_SRC="$SCRIPT_DIR/../data/argus-favicon.png"
+[ -f "$FAVICON_SRC" ] && cp "$FAVICON_SRC" "$SITE_DIR/favicon.png"
+
 # ---- collect what is actually published ------------------------------------
 CARDS='[]'
 for b in $BRANCHES; do
@@ -72,8 +79,6 @@ if [ "$COUNT" -eq 0 ]; then
   exit 0
 fi
 
-ICON_BRANCH=$(jq -r '.[0].branch' <<<"$CARDS")
-
 cat > "$SITE_DIR/index.html" << HTMLEOF
 <!DOCTYPE html>
 <html lang="en">
@@ -81,7 +86,7 @@ cat > "$SITE_DIR/index.html" << HTMLEOF
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Argus Test Suite</title>
-<link rel="icon" type="image/png" href="${ICON_BRANCH}/favicon.png">
+<link rel="icon" type="image/png" href="favicon.png">
 HTMLEOF
 
 cat >> "$SITE_DIR/index.html" << 'HTMLEOF2'
@@ -109,7 +114,22 @@ body { font-family:"Nunito Sans",-apple-system,BlinkMacSystemFont,sans-serif;
 a { color:inherit; }
 .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.92em; }
 h1 { font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing:0.11em;
-     color:var(--fg); margin:0 0 6px; }
+     color:var(--fg); margin:0 0 6px; display:flex; align-items:center; }
+/* Argus's eye beside the title. Grayscaled deliberately: it is a mark, not a
+   status light, and the page already spends colour on severity -- a green eye
+   next to a red risk number competes with the one signal that should carry it.
+   The source is the same 32x32 PNG used as the favicon, so nothing extra is
+   fetched. Slightly darkened in light mode: the green grayscales to about
+   #a1a1a1, which sits well on near-black but is weak on white.
+   aria-hidden because the title beside it already says the name. */
+.eye { height: 1.2em; width: auto; vertical-align: -0.2em; margin-right: 0.55em;
+       filter: grayscale(1) brightness(0.72); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .eye { filter: grayscale(1) brightness(1.05); }
+}
+:root[data-theme="dark"] .eye { filter: grayscale(1) brightness(1.05); }
+:root[data-theme="light"] .eye { filter: grayscale(1) brightness(0.72); }
+
 .lede { font-size:0.82rem; color:var(--fg3); margin:0 0 28px; max-width:70ch; }
 .branch { border:1px solid var(--border); background:var(--surface); margin-bottom:12px; }
 .bhead { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
@@ -138,7 +158,7 @@ footer { margin-top:34px; padding-top:16px; border-top:1px solid var(--border);
 </head>
 <body>
 <div class="wrap">
-  <h1>Argus Test Suite</h1>
+  <h1><img class="eye" src="favicon.png" alt="" aria-hidden="true">Argus Test Suite</h1>
   <p class="lede">Consumer-contract tests for
     <a href="https://github.com/huntridge-labs/argus">huntridge-labs/argus</a>,
     published per branch. Each branch keeps its own run history, so results from
