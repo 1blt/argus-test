@@ -29,15 +29,24 @@ downstream repo calling `@main` still gets the behaviour it expects.
 Test results are published to GitHub Pages with each run. The page is three
 blocks, in priority order:
 
-1. **Status header** &mdash; an A&ndash;F grade, passed/defined, movement against the
-   previous run, the argus ref/version/commit under test, and a score-by-date
+1. **Status header** &mdash; a severity-weighted **risk index**, a pass rate over
+   every test the suite defines, movement against the previous run, the argus
+   ref/version/commit under test with its liveness split, and a score-by-date
    chart. Counts double as filters.
 
-   The grade is `passed ÷ every test the suite defines`, so tests that did not
-   run count as *no assurance* rather than silently vanishing &mdash; otherwise a
-   suite that skips most of itself and passes the rest would score an A. A
-   failing test then caps the grade at B, because "96% passing" is not an A when
-   the missing 4% is a severity gate that stopped enforcing.
+   The pass rate is `passed ÷ every test the suite defines`, so tests that did
+   not run count as *no assurance* rather than silently vanishing &mdash;
+   otherwise a suite that skips most of itself and passes the rest would look
+   healthy.
+
+   **There is deliberately no letter grade.** One letter is severity-blind: a
+   scan reporting success without scanning and a failed report upload each cost
+   it exactly one test, so "96% passing" would read as good over a state that
+   includes a gate that stopped enforcing. The risk index carries the severity
+   and the colour; the pass rate is a breadth figure and is rendered uncoloured
+   for that reason. Both are computed once, written into `history.json`, and
+   *read* by the branch hub and the root index &mdash; so the three levels of the
+   site cannot derive different headlines from the same run.
 2. **Search** &mdash; one box that answers whether a behaviour is tested (below).
 3. **One flat table of every entry** &mdash; all 88 tests and every coverage note,
    visible without a single click, grouped by category with a sticky header.
@@ -519,9 +528,9 @@ Each branch publishes its own subtree, so `dev` results never overwrite
 
 ```
 argus-test/
-├── index.html                       root switcher (or a redirect, with one branch)
+├── index.html                       root: one card per branch, with its figures
 ├── main/
-│   ├── index.html                   summary hub — grade, ref, liveness, links
+│   ├── index.html                   summary hub — risk, pass rate, ref, links
 │   ├── history.json                 last 20 runs, for the score chart
 │   ├── favicon.png
 │   ├── tests/
@@ -532,9 +541,15 @@ argus-test/
     └── …                            same shape
 ```
 
+The site root lists every published branch as a card carrying that branch's
+risk index, pass rate, passed-of-defined, last-run time and movement against
+its previous run, plus direct links to its three pages. The figures are read
+from each branch's `history.json` rather than recomputed, so the root cannot
+disagree with the board it links to.
+
 The branch root is a **hub**, not a page of its own findings. It carries the
-grade, the ref under test with its liveness split, and one card per child page
-restating that page's headline. The two children answer different questions —
+risk index and pass rate, the ref under test with its liveness split, and one
+card per child page restating that page's headline. The two children answer different questions —
 *does argus behave the way a consumer expects* and *how tidy is the code* — and
 keeping them apart is the point: nothing on the cleanliness page gates
 anything, and a duplication figure is not part of the verdict.

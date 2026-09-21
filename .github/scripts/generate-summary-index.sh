@@ -72,17 +72,38 @@ STATS=$(jq -n -c --argjson all "$ALL_JSON" --argjson fc "$CLASSES_JSON" '
               | first // "none")
     }')
 
-# Grade: passed over every test the suite DEFINES, so a run that skipped most of
-# itself scores as no assurance rather than as an A. A single failure caps at B,
-# because "96% passing" is not an A when the missing 4% is a gate that stopped
-# enforcing. Identical to the dashboard's rule -- if one changes, both must.
-GRADE=$(jq -n -r --argjson s "$STATS" '
-  ($s.total) as $t
-  | (if $t == 0 then 0 else ($s.passed / $t * 100) end) as $pct
-  | (if   $pct >= 97 then "A+" elif $pct >= 93 then "A" elif $pct >= 90 then "A-"
-     elif $pct >= 87 then "B+" elif $pct >= 83 then "B" elif $pct >= 80 then "B-"
-     elif $pct >= 70 then "C"  elif $pct >= 60 then "D" else "F" end) as $g
-  | if $s.failed > 0 and ($g | startswith("A")) then "B+" else $g end')
+# NO LETTER GRADE. The dashboard removed one deliberately -- its own comment
+# calls it "the trap the letter grade fell into" -- because a single letter is
+# severity-blind: a silent pass and a broken SARIF upload each cost it one
+# test, so 95% renders as "good" over a state that includes scans reporting
+# success without scanning. The headline is the same pair the board uses: the
+# severity-weighted risk index, which carries the colour, and an uncoloured
+# pass rate, which is a breadth figure and nothing more.
+#
+# Both are READ from history.json rather than recomputed, so this page cannot
+# drift from the board. history.json is written by generate-dashboard.sh after
+# the catalog exists, which is why `defined` here is every test the suite
+# declares and not merely the ones that reported.
+HISTORY_FILE="${HISTORY_FILE:-$OUT_DIR/history.json}"
+LATEST='null'
+if [ -f "$HISTORY_FILE" ] && jq empty "$HISTORY_FILE" 2>/dev/null; then
+  LATEST=$(jq -c '.[-1] // null' "$HISTORY_FILE")
+fi
+# Fall back to the locally computed stats if history is missing, so the hub
+# still renders rather than showing blanks.
+HEAD_JSON=$(jq -n -c --argjson l "$LATEST" --argjson s "$STATS" '
+  ($l // {}) as $h
+  | { passed:   ($h.passed   // $s.passed),
+      defined:  ($h.defined  // $s.total),
+      failed:   $s.failed,
+      skipped:  $s.skipped,
+      risk:     ($h.risk     // $s.risk),
+      pct:      ($h.pct_defined // (if ($s.total) > 0 then (($s.passed / $s.total) * 100 | floor) else 0 end)),
+      worst:    ($h.worst    // $s.worst),
+      prevRisk: null }')
+# Movement against the previous run, so the number has a direction.
+HEAD_JSON=$(jq -c --argjson hist "$(jq -c '.' "$HISTORY_FILE" 2>/dev/null || echo '[]')" '
+  . + { prevRisk: ($hist | if length > 1 then .[-2].risk else null end) }' <<<"$HEAD_JSON")
 
 cat > "$OUT_DIR/index.html" << 'HTMLEOF'
 <!DOCTYPE html>
@@ -134,9 +155,13 @@ h1 { font-size:1.15rem; font-weight:700; text-transform:uppercase; letter-spacin
 .chip-ok { color:var(--pass-ink); background:var(--pass-bg); border-color:var(--pass); }
 .verdict { display:flex; align-items:baseline; gap:16px; border:1px solid var(--border);
            padding:20px 22px; background:var(--surface); margin-bottom:12px; flex-wrap:wrap; }
-.grade { font-size:3rem; font-weight:300; line-height:1; color:var(--fg); }
-.grade.bad { color:var(--fail-ink); }
-.grade.good { color:var(--pass-ink); }
+.hstats { display:flex; gap:30px; flex:0 0 auto; }
+.hstat .n { font-size:2.2rem; font-weight:300; line-height:1; color:var(--fg); }
+.hstat .n.bad { color:var(--fail-ink); } .hstat .n.warn { color:var(--warn-ink); }
+.hstat .n.good { color:var(--pass-ink); }
+.hstat .l { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.07em;
+            color:var(--fg3); margin-top:5px; }
+.hstat .s { font-size:0.7rem; color:var(--fg3); }
 .vtext { flex:1 1 260px; }
 .vword { font-size:0.8rem; font-weight:700; text-transform:uppercase; letter-spacing:var(--track); color:var(--fg); }
 .vline { font-size:0.8rem; color:var(--fg3); margin-top:2px; }
@@ -171,13 +196,13 @@ footer { margin-top:40px; padding-top:18px; border-top:1px solid var(--border);
 HTMLEOF
 
 {
-  echo "const S = $STATS;"
+  echo "const S = $STATS;
+const HEAD = $HEAD_JSON;"
   echo "const CLEAN = $CLEAN_JSON;"
   echo "const LIVE = $LIVENESS_JSON;"
   echo "const FC = $CLASSES_JSON;"
   echo "const GAPS = $GAPS_JSON;"
   echo "const PAGE = {"
-  echo "  grade: \"${GRADE}\","
   echo "  date: \"${DATE_STR}\","
   echo "  branch: \"${BRANCH:-}\","
   echo "  argusRef: \"${ARGUS_REF:-}\","
@@ -231,21 +256,36 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
 
   // ---- verdict -------------------------------------------------------------
   var STATUS = (FC && FC.status) || {};
-  var st = STATUS[S.worst] || STATUS.none ||
+  var st = STATUS[HEAD.worst] || STATUS[S.worst] || STATUS.none ||
            { word: S.failed ? 'FAIL' : 'PASS', line: '' };
-  var tone = S.failed > 0 ? 'bad' : (S.passed > 0 ? 'good' : '');
+  // Risk carries the colour, because severity is what it measures. Pass rate
+  // stays uncoloured on purpose -- it is severity-blind by construction, so
+  // rendering it green would say "good" about a state that can include a scan
+  // reporting success without scanning. Same rule as the board.
+  var move = '';
+  if (HEAD.prevRisk !== null && HEAD.prevRisk !== undefined) {
+    var d = HEAD.risk - HEAD.prevRisk;
+    move = d === 0 ? 'no change vs last run'
+         : (d > 0 ? '\u25b2 +' + d : '\u25bc ' + d) + ' vs last run';
+  }
   $('verdict').innerHTML =
     '<div class="verdict">' +
-      '<div class="grade ' + tone + '">' + esc(PAGE.grade) + '</div>' +
+      '<div class="hstats">' +
+        '<div class="hstat"><div class="n ' + (HEAD.risk ? (st.tone || 'bad') : 'good') + '">' +
+          esc(HEAD.risk) + '</div><div class="l">Risk index</div></div>' +
+        '<div class="hstat"><div class="n">' + esc(HEAD.pct) + '%</div>' +
+          '<div class="l">Passing <span class="s">' + esc(HEAD.passed) + '/' + esc(HEAD.defined) +
+          '</span></div></div>' +
+      '</div>' +
       '<div class="vtext">' +
         '<div class="vword">' + esc(st.word || '') + '</div>' +
         '<div class="vline">' + esc(st.line || '') + '</div>' +
+        (move ? '<div class="vline">' + esc(move) + '</div>' : '') +
       '</div>' +
       '<div class="figs">' +
-        fig(S.passed, 'passed', '') +
         fig(S.failed, 'failed', S.failed ? 'bad' : '') +
         fig(S.skipped, 'no assurance', S.skipped ? 'warn' : '') +
-        fig(S.total, 'defined', '') +
+        fig(HEAD.defined, 'defined', '') +
       '</div>' +
     '</div>';
 
@@ -268,8 +308,8 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
       '<div class="sub">Does argus still behave the way a consumer expects? Every test the suite ' +
       'defines, searchable in plain language.</div>' +
       '<div class="figs">' +
-        fig(S.passed + '/' + S.total, 'passing', '') +
-        fig(S.risk, 'risk index', S.risk ? 'bad' : '') +
+        fig(HEAD.passed + '/' + HEAD.defined, 'passing', '') +
+        fig(HEAD.risk, 'risk index', HEAD.risk ? 'bad' : '') +
         fig(gapN, 'known gaps', '') +
         (retN ? fig(retN, 'gaps retired', '') : '') +
       '</div>' +
@@ -310,4 +350,4 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
 </html>
 HTMLEOF2
 
-echo "Summary hub written: $OUT_DIR/index.html (grade $GRADE, worst $(jq -r '.worst' <<<"$STATS"))"
+echo "Summary hub written: $OUT_DIR/index.html ($(jq -r '"\(.passed)/\(.defined) passing, risk \(.risk), worst \(.worst)"' <<<"$HEAD_JSON"))"

@@ -996,56 +996,18 @@ jobs:
       # policy, so a branch that is not allowed to deploy never appears here --
       # better than a card linking to a 404. With only one branch published the
       # root just forwards to it, so the site has no dead ends either way.
-      - name: Write the root switcher
-        run: |
-          touch _site/.nojekyll
-          PRESENT=""
-          for d in main dev; do
-            [ -f "_site/$d/index.html" ] && PRESENT="$PRESENT $d"
-          done
-          PRESENT=$(echo $PRESENT | xargs)
-          COUNT=$(echo "$PRESENT" | wc -w | xargs)
-          echo "Branches published: ${PRESENT:-none} (count=$COUNT)"
-
-          if [ "$COUNT" -le 1 ]; then
-            ONLY=$(echo "$PRESENT" | xargs)
-            [ -n "$ONLY" ] || ONLY="${GITHUB_REF_NAME}"
-            printf '%s\n' \
-              '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' \
-              "<meta http-equiv=\"refresh\" content=\"0; url=$ONLY/\">" \
-              "<link rel=\"canonical\" href=\"$ONLY/\"><title>Argus Test Suite</title>" \
-              "</head><body><p>Redirecting to <a href=\"$ONLY/\">$ONLY</a>.</p></body></html>" \
-              > _site/index.html
-            echo "Root forwards to /$ONLY/"
-            exit 0
-          fi
-
-          {
-            echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
-            echo '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            echo '<title>Argus Test Suite</title><link rel="icon" href="'"${GITHUB_REF_NAME}"'/favicon.png">'
-            echo '<style>'
-            echo "@import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;600;700&display=swap');"
-            echo ':root{--bg:#fff;--fg:#1a1a1a;--fg2:#55595c;--fg3:#919aa1;--border:#dee2e6}'
-            echo '@media(prefers-color-scheme:dark){:root{--bg:#101214;--fg:#ece9e4;--fg2:#a7adb3;--fg3:#737b82;--border:#282d32}}'
-            echo 'body{font-family:"Nunito Sans",-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg);color:var(--fg2);margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}'
-            echo '.w{max-width:560px;padding:32px}'
-            echo 'h1{font-size:1.05rem;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--fg);margin:0 0 6px}'
-            echo 'p{font-size:.85rem;color:var(--fg3);margin:0 0 26px}'
-            echo 'a.card{display:block;border:1px solid var(--border);padding:16px 18px;margin-bottom:10px;text-decoration:none;color:inherit}'
-            echo 'a.card:hover{border-color:var(--fg)}'
-            echo '.n{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--fg)}'
-            echo '.d{font-size:.78rem;color:var(--fg3);margin-top:3px}'
-            echo '</style></head><body><div class="w">'
-            echo '<h1>Argus Test Suite</h1>'
-            echo '<p>Results are published per branch. Each has its own run history.</p>'
-            for b in $PRESENT; do
-              if [ "$b" = "main" ]; then D="Results for the default branch"; else D="Results for work in progress on $b"; fi
-              echo '<a class="card" href="'"$b"'/"><span class="n">'"$b"'</span><div class="d">'"$D"'</div></a>'
-            done
-            echo '</div></body></html>'
-          } > _site/index.html
-          echo "Root switcher written for: $PRESENT"
+      # The site root: one card per published branch, with that branch's
+      # headline figures. Read from each <branch>/history.json rather than
+      # recomputed, so the root cannot disagree with the board it links to.
+      # Was an inline heredoc listing branch names against two hardcoded
+      # sentences and no figures at all -- the top of the site said less than
+      # any page beneath it.
+      - name: Write the root index
+        env:
+          SITE_DIR: _site
+          BRANCHES: "main dev"
+          FALLBACK: ${{ github.ref_name }}
+        run: bash .github/scripts/generate-root-index.sh
 
       # Every branch gets the rendered site as a downloadable artifact, so a
       # reviewer can open the board for a branch that cannot publish. This also

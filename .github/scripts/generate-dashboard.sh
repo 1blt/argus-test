@@ -96,21 +96,6 @@ RISK=$(jq -n -c --argjson all "$ALL_JSON" --argjson fc "${CLASSES_JSON:-null}" '
   | [ $all[] | select(.status == "FAIL") | ($cls[.id] // $dflt) | ($w[.] // 0) ] | add // 0')
 echo "Risk index: $RISK"
 
-CURRENT_RUN=$(jq -n -c \
-  --argjson risk "$RISK" \
-  --arg date "$DATE_STR" \
-  --arg scope "$SCOPE" \
-  --argjson passed "$PASSED" \
-  --argjson total "$TOTAL" \
-  --argjson rate "$PASS_RATE" \
-  --arg verdict "$VERDICT" \
-  --arg url "$RUN_URL" \
-  --arg run_id "$RUN_ID" \
-  '{date:$date, scope:$scope, passed:$passed, total:$total, rate:$rate, risk:$risk, verdict:$verdict, url:$url, run_id:$run_id}')
-
-# Append and cap at 20
-jq -c --argjson run "$CURRENT_RUN" '. + [$run] | .[-20:]' "$HISTORY_FILE" > "$HISTORY_FILE.tmp"
-mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
 
 # ---------- build category data for HTML ----------
 cat_status() {
@@ -274,6 +259,50 @@ for wf in test-unit test-actions-direct test-runtime-env test-remote test-discov
   fi
 done
 echo "Test catalog entries: $(echo "$CATALOG_JSON" | jq 'length')"
+
+
+# ---------- history ----------
+# Written here, not earlier: DEFINED is the catalog count, so this has to
+# run after the catalog exists.
+# DEFINED is the catalog count -- every test the suite declares, including the
+# ones that did not run. It is the denominator the board divides by, and it is
+# NOT the same as TOTAL (results actually reported). Persisting both, plus the
+# worst failing class, is what stops the root index, the branch hub and the
+# dashboard from each deriving a slightly different headline from the same run
+# and disagreeing in public.
+DEFINED=$(echo "$CATALOG_JSON" | jq 'length')
+[ "$DEFINED" -gt 0 ] 2>/dev/null || DEFINED="$TOTAL"
+PCT_DEFINED=$(( DEFINED > 0 ? PASSED * 100 / DEFINED : 0 ))
+WORST=$(jq -n -r --argjson all "$ALL_JSON" --argjson fc "${CLASSES_JSON:-null}" '
+  ($fc // {}) as $f
+  | (($f.weights) // {open:10, degraded:6, closed:3, auxiliary:1}) as $w
+  | (($f.default) // "closed") as $dflt
+  | (($f.classes) // {} | to_entries | map(.value[] as $id | {key:$id, value:.key}) | from_entries) as $cls
+  | [$all[] | select(.status == "FAIL") | ($cls[.id] // $dflt)] as $fc2
+  | ($w | to_entries | sort_by(-.value) | map(.key))
+  | map(select(. as $c | $fc2 | index($c))) | first // "none"')
+echo "Defined: $DEFINED   passing: $PASSED ($PCT_DEFINED%)   worst class: $WORST"
+
+CURRENT_RUN=$(jq -n -c \
+  --argjson risk "$RISK" \
+  --argjson defined "$DEFINED" \
+  --argjson pct_defined "$PCT_DEFINED" \
+  --arg worst "$WORST" \
+  --arg date "$DATE_STR" \
+  --arg scope "$SCOPE" \
+  --argjson passed "$PASSED" \
+  --argjson total "$TOTAL" \
+  --argjson rate "$PASS_RATE" \
+  --arg verdict "$VERDICT" \
+  --arg url "$RUN_URL" \
+  --arg run_id "$RUN_ID" \
+  '{date:$date, scope:$scope, passed:$passed, total:$total, defined:$defined,
+    rate:$rate, pct_defined:$pct_defined, risk:$risk, worst:$worst,
+    verdict:$verdict, url:$url, run_id:$run_id}')
+
+# Append and cap at 20
+jq -c --argjson run "$CURRENT_RUN" '. + [$run] | .[-20:]' "$HISTORY_FILE" > "$HISTORY_FILE.tmp"
+mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
 
 
 # ---------- coverage gaps (searchable "is this tested?" corpus) ----------
