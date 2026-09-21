@@ -107,6 +107,8 @@ jobs:
           path: |
             ~/.cache/grype/db
             ~/.cache/trivy
+          # Unique per run so every run saves, with a prefix restore so every
+          # run after the first starts from the previous one's databases.
           key: scannerdb-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             scannerdb-${{ runner.os }}-
@@ -121,6 +123,33 @@ jobs:
             | sh -s -- -b "$HOME/scanbin" v0.92.2
           "$HOME/scanbin/trivy" --version
           "$HOME/scanbin/grype" version
+
+      # WARM THE DATABASES, WITH RETRIES. The preflight kept reporting "grype
+      # cannot complete a scan (database unavailable?)" and the test recorded
+      # no assurance -- correct, but useless. A ~200MB download that fails
+      # once is not a reason to have no verdict, so download it deliberately
+      # and retry, instead of hoping the first scan happens to succeed.
+      - name: Warm the scanner databases
+        run: |
+          set -uo pipefail
+          export PATH="$HOME/scanbin:$PATH"
+          ok_grype=false
+          for i in 1 2 3 4; do
+            if grype db update; then ok_grype=true; break; fi
+            echo "::warning::grype db update attempt $i failed"; sleep $((i * 20))
+          done
+          ok_trivy=false
+          for i in 1 2 3 4; do
+            if trivy image --download-db-only; then ok_trivy=true; break; fi
+            echo "::warning::trivy db download attempt $i failed"; sleep $((i * 20))
+          done
+          echo "grype db ready: $ok_grype   trivy db ready: $ok_trivy"
+          # Stop the scans re-fetching once the databases are in place; a
+          # mid-scan refresh is what made this flaky in the first place.
+          {
+            echo "GRYPE_DB_AUTO_UPDATE=false"
+            echo "TRIVY_SKIP_DB_UPDATE=true"
+          } >> "$GITHUB_ENV"
 
       - name: Assert both halves of the split
         id: assert
@@ -364,12 +393,32 @@ jobs:
           # given. A source scan would miss a fallback assembled at runtime, and
           # that assertion-on-structure blind spot is what let this ship.
           mkdir -p "$HOME/fakebin"
+          # The stub used to succeed for everything except `pull`, so argus's
+          # "is this image already local?" probe -- docker image inspect --
+          # returned 0, argus concluded no pull was needed, and the retry path
+          # this test exists to observe was never reached. It reported skip and
+          # I blamed the CLI. The image must look ABSENT for a pull to happen.
           cat > "$HOME/fakebin/docker" <<'SH'
           #!/usr/bin/env bash
           echo "$@" >> "${PULL_LOG:-/tmp/pull-argv.log}"
           case "$1" in
-            pull) echo "no matching manifest for the requested platform" >&2; exit 1 ;;
-            *)    exit 0 ;;
+            pull)
+              echo "no matching manifest for the requested platform" >&2; exit 1 ;;
+            inspect)
+              echo "Error: No such object" >&2; exit 1 ;;
+            image)
+              # `image inspect` must fail; `image ls` returns nothing.
+              case "${2:-}" in
+                inspect) echo "Error: No such image" >&2; exit 1 ;;
+                *)       exit 0 ;;
+              esac ;;
+            images)
+              exit 0 ;;                      # empty listing: nothing cached
+            manifest)
+              # No manifest data, so a platform-aware retry must decide without it.
+              echo "no such manifest" >&2; exit 1 ;;
+            *)
+              exit 0 ;;                      # version/info: the runtime exists
           esac
           SH
           chmod +x "$HOME/fakebin/docker"
