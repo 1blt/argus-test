@@ -127,14 +127,27 @@ p { font-size:0.82rem; max-width:74ch; }
 .cl-cols { border-top:1px solid var(--rule); }
 .cl-hd { display:grid; grid-template-columns:1fr 1fr; font-size:0.68rem; color:var(--fg3);
          padding:7px 12px; background:var(--surface2); border-bottom:1px solid var(--rule); }
-.cl-scroll { overflow:auto; max-height:460px; }
-.cl-diff { width:100%; border-collapse:collapse;
+/* Vertical scroll only. The two copies WRAP rather than running off sideways:
+   a horizontal scrollbar under a side-by-side comparison means reading one
+   column, scrolling back, and reading the other, which is the thing the layout
+   was supposed to remove.
+   Wrapping does not break the pairing, because the pairing is the table ROW --
+   a cell that wraps to three visual lines makes its row taller and its
+   counterpart stays beside it. table-layout:fixed is what makes the columns
+   hold their width instead of stretching to the longest line. */
+.cl-scroll { overflow-x:hidden; overflow-y:auto; max-height:460px; }
+.cl-diff { width:100%; border-collapse:collapse; table-layout:fixed;
            font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
            font-size:0.68rem; line-height:1.5; }
-.cl-diff td { padding:0 8px; border:none; vertical-align:top; white-space:pre; }
-.cl-diff td.ln { width:1%; text-align:right; color:var(--fg3); user-select:none;
-                 border-right:1px solid var(--rule); opacity:.65; }
-.cl-diff td.cd { width:49%; color:var(--fg2); }
+.cl-diff td { padding:1px 8px; border:none; vertical-align:top; }
+.cl-diff tr + tr td { border-top:1px solid color-mix(in srgb, var(--rule) 55%, transparent); }
+.cl-diff td.ln { width:3.4em; text-align:right; color:var(--fg3); user-select:none;
+                 border-right:1px solid var(--rule); opacity:.65; white-space:nowrap; }
+.cl-diff td.cd { color:var(--fg2); white-space:pre-wrap; overflow-wrap:anywhere;
+                 word-break:break-word; }
+/* Each side gets half of what the line-number gutters leave. */
+.cl-diff td.cd { width:calc(50% - 3.4em); }
+@media (max-width:720px) { .cl-diff td.ln { width:2.6em; } .cl-diff { font-size:0.64rem; } }
 .cl-diff tr.eq td.cd { background:var(--pass-bg); color:var(--pass-ink); }
 .cl-diff tr.df td.cd { background:var(--warn-bg); color:var(--warn-ink); }
 .cl-sum { font-size:0.7rem; color:var(--fg3); padding:8px 12px; border-top:1px solid var(--rule); }
