@@ -154,6 +154,8 @@ h1 { font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing
 .bhead:hover .bname { text-decoration:underline; text-underline-offset:3px; }
 .bname { font-size:0.82rem; font-weight:700; text-transform:uppercase;
          letter-spacing:0.08em; color:var(--fg); }
+.bgo { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.07em; color:var(--fg3); }
+.bhead:hover .bgo { color:var(--fg); }
 .bwhen { font-size:0.7rem; color:var(--fg3); margin-left:auto; }
 .bstats { display:flex; gap:26px; flex-wrap:wrap; padding:0 20px 14px; }
 .bs .n { font-size:1.45rem; font-weight:300; line-height:1.1; color:var(--fg); }
@@ -259,7 +261,11 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
       cl = '<div class="bclean"><span class="clabel">Cleanliness</span> figures not published for this run</div>';
     }
 
-    var links = '<a href="' + esc(b.branch) + '/">Summary</a>';
+    // No "Summary" link here. The branch name above is already that link, and
+    // on a page which is itself a summary the label answered "summary of
+    // what?" with a second copy of the thing you were looking at. The row is
+    // for the pages this card does NOT already contain.
+    var links = '';
     if (b.hasTests) links += '<a href="' + esc(b.branch) + '/tests/">Test results</a>';
     if (b.hasClean) links += '<a href="' + esc(b.branch) + '/code-cleanliness/">Code cleanliness</a>';
     if (h && h.url) links += '<a href="' + esc(h.url) + '">Run &#8599;</a>';
@@ -267,6 +273,7 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
     return '<div class="branch">' +
              '<a class="bhead" href="' + esc(b.branch) + '/">' +
                '<span class="bname">' + esc(b.branch) + '</span>' +
+               '<span class="bgo">branch summary &rarr;</span>' +
                (h ? '<span class="bwhen">' + esc(h.date) + '</span>' : '') +
              '</a>' + body + cl +
              '<div class="blinks">' + links + '</div>' +
