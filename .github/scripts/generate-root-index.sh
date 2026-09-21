@@ -177,29 +177,28 @@ h1 { font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing
 .modes button:last-child { border-right:none; }
 .modes button:hover { color:var(--fg); }
 .modes button.on { background:var(--fg); color:var(--bg); }
-.branch { border:1px solid var(--border); background:var(--surface); margin-bottom:12px; }
+.branch { display:block; border:1px solid var(--border); background:var(--surface);
+          margin-bottom:12px; text-decoration:none; color:inherit; transition:border-color .12s; }
+.branch:hover { border-color:var(--fg); }
+.branch.dead { opacity:0.62; }
+.branch.dead:hover { border-color:var(--border); }
+.branch:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+.branch:hover .bname { text-decoration:underline; text-underline-offset:3px; }
 .bhead { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
-         padding:16px 20px 12px; text-decoration:none; color:inherit; }
-.bhead:hover .bname { text-decoration:underline; text-underline-offset:3px; }
+         padding:16px 20px 12px; }
 .bname { font-size:0.82rem; font-weight:700; text-transform:uppercase;
          letter-spacing:0.08em; color:var(--fg); }
 .bsha { font-size:0.68rem; color:var(--fg3); }
 .bhead:hover .bsha { color:var(--fg2); }
 .bs .of { font-size:0.72rem; color:var(--fg3); }
 .bwhen { font-size:0.7rem; color:var(--fg3); margin-left:auto; }
-.bstats { display:flex; gap:26px; flex-wrap:wrap; padding:0 20px 14px; }
+.bstats { display:flex; gap:26px; flex-wrap:wrap; padding:0 20px 12px; }
 .bs .n { font-size:1.45rem; font-weight:300; line-height:1.1; color:var(--fg); }
 .bs .n.bad { color:var(--fail-ink); } .bs .n.warn { color:var(--warn-ink); }
 .bs .n.good { color:var(--pass-ink); }
 .bs .l { font-size:0.6rem; text-transform:uppercase; letter-spacing:0.07em; color:var(--fg3); }
-.bline { font-size:0.75rem; color:var(--fg3); padding:0 20px 10px; }
-.blinks { display:flex; gap:0; border-top:1px solid var(--rule); }
-.blinks a { flex:1; text-align:center; padding:10px 12px; font-size:0.68rem; font-weight:700;
-            text-transform:uppercase; letter-spacing:0.07em; color:var(--fg3);
-            text-decoration:none; border-right:1px solid var(--rule); }
-.blinks a:last-child { border-right:none; }
-.blinks a:hover { color:var(--fg); background:var(--bg); }
-.none { font-size:0.75rem; color:var(--fg3); padding:0 20px 16px; font-style:italic; }
+.bline { font-size:0.75rem; color:var(--fg3); padding:0 20px 16px; }
+.none { font-size:0.75rem; color:var(--fg3); padding:0 20px 18px; font-style:italic; }
 footer { margin-top:34px; padding-top:16px; border-top:1px solid var(--border);
          font-size:0.72rem; color:var(--fg3); }
 @media (max-width:640px) { .wrap { padding:32px 16px 48px; } .bstats { gap:18px; } }
@@ -252,7 +251,7 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
 
   function card(b, mode) {
     var h = b.latest;
-    var body, link, note = '';
+    var body, note = '';
 
     if (mode === 'cleanliness') {
       var m = b.metrics;
@@ -269,8 +268,7 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
         // these numbers can fail a build.
         note = '<div class="bline">Reported, never gated.</div>';
       }
-      link = b.hasClean
-        ? '<a href="' + esc(b.branch) + '/code-cleanliness/">Open metrics</a>' : '';
+
     } else {
       if (!h) {
         body = '<div class="none">Published, but no run history yet &mdash; figures appear ' +
@@ -295,21 +293,42 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
                  ? ' &middot; scope <span class="mono">' + esc(h.scope) + '</span>' : '') +
                '</div>';
       }
-      link = b.hasTests ? '<a href="' + esc(b.branch) + '/tests/">Open board</a>' : '';
+
     }
 
-    if (h && h.url) link += '<a href="' + esc(h.url) + '">Run &#8599;</a>';
+    // THE WHOLE CARD IS THE LINK. It had a header anchor and a row of links
+    // underneath, which meant three targets for two destinations and an
+    // invalid nesting if the card itself became clickable. One target now, and
+    // the row is gone.
+    //
+    // The "Run" link went with it. It jumped to the raw Actions log, which is
+    // not what anyone opening a results index is looking for, and it is still
+    // one click away from the page this card leads to.
+    // Only link where a page actually exists. A branch can publish results
+    // before its cleanliness figures ever ran, and a card that navigates to a
+    // 404 is worse than one that plainly does not navigate.
+    var exists = mode === 'cleanliness' ? b.hasClean : b.hasTests;
     var href = esc(b.branch) + '/' + (mode === 'cleanliness' ? 'code-cleanliness/' : 'tests/');
+    if (!exists) {
+      return '<div class="branch dead">' +
+               '<div class="bhead">' +
+                 '<span class="bname">' + esc(b.name || b.branch) + '</span>' +
+                 (h && h.self_sha
+                   ? '<span class="bsha mono">' + esc(String(h.self_sha).slice(0, 7)) + '</span>' : '') +
+                 (h ? '<span class="bwhen">' + esc(h.date) + '</span>' : '') +
+               '</div>' + body + note +
+               '<div class="bline">This branch has not published this page yet.</div>' +
+             '</div>';
+    }
 
-    return '<div class="branch">' +
-             '<a class="bhead" href="' + href + '">' +
+    return '<a class="branch" href="' + href + '">' +
+             '<div class="bhead">' +
                '<span class="bname">' + esc(b.name || b.branch) + '</span>' +
                (h && h.self_sha
                  ? '<span class="bsha mono">' + esc(String(h.self_sha).slice(0, 7)) + '</span>' : '') +
                (h ? '<span class="bwhen">' + esc(h.date) + '</span>' : '') +
-             '</a>' + body + note +
-             (link ? '<div class="blinks">' + link + '</div>' : '') +
-           '</div>';
+             '</div>' + body + note +
+           '</a>';
   }
 
   // The choice is a reading preference, not state anyone else depends on, so
@@ -335,7 +354,7 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
 
   document.getElementById('foot').innerHTML =
     'Figures are read from each branch’s <span class="mono">history.json</span> rather than ' +
-    'recomputed here, so this page cannot disagree with the board it links to. There is no letter ' +
+    'recomputed here, so this page cannot disagree with the pages it links to. There is no letter ' +
     'grade: one letter is severity-blind, and a silent pass would cost it exactly as much as a ' +
     'failed report upload. Generated ' + esc(GENERATED) + '.';
 })();

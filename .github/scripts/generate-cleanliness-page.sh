@@ -343,7 +343,7 @@ __NAV_JS__
       'comprehension time <a href="#ref-2">[2]</a>. Threshold 15 is SonarSource\u2019s default \u2014 ' +
       'a convention, not a finding.</td></tr>' +
     '<tr><td class="k">Duplicate test tuples</td><td>DRY</td><td>Local. PR #13 cut six tests found ' +
-      'this way by hand; a redundant test also inflates the denominator of the board\u2019s pass ' +
+      'this way by hand; a redundant test also inflates the denominator of the pass ' +
       'rate.</td></tr>' +
     '<tr class="excluded"><td class="k">Cyclomatic complexity</td><td></td><td>Correlates ~0.9 with ' +
       'line count <a href="#ref-4">[4]</a><a href="#ref-5">[5]</a>, so it re-measures size. Excluded.</td></tr>' +
@@ -362,7 +362,7 @@ __NAV_JS__
   $('body').innerHTML = html;
   $('foot').innerHTML =
     'Measured by <span class="mono">.github/scripts/cleanliness-metrics.sh</span> on every run. ' +
-    '<a href="../">Summary</a> &middot; <a href="../tests/">Test results</a>.';
+    '<a href="../../">All branches</a> &middot; <a href="../tests/">Test results</a>.';
 })();
 </script>
 </body>
