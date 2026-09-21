@@ -38,6 +38,7 @@ EDGE_JSON=$(safe_json "${EDGE_JSON:-}")
 WF_JSON=$(safe_json "${WF_JSON:-}")
 SCN_JSON=$(safe_json "${SCN_JSON:-}")
 REGRESSION_JSON=$(safe_json "${REGRESSION_JSON:-}")
+RUNTIME_JSON=$(safe_json "${RUNTIME_JSON:-}")
 ALL_JSON=$(safe_json "${ALL_JSON:-}")
 
 # ---------- compute stats ----------
@@ -78,7 +79,7 @@ fi
 # failing tests, with the file's default applied to anything unclassified.
 RISK=$(jq -n -c --argjson all "$ALL_JSON" --argjson fc "${CLASSES_JSON:-null}" '
   ($fc // {}) as $f
-  | (($f.weights) // {open:10, closed:3, degraded:1}) as $w
+  | (($f.weights) // {open:10, degraded:6, closed:3, auxiliary:1}) as $w
   | (($f.default) // "closed") as $dflt
   | (($f.classes) // {} | to_entries | map(.value[] as $id | {key:$id, value:.key}) | from_entries) as $cls
   | [ $all[] | select(.status == "FAIL") | ($cls[.id] // $dflt) | ($w[.] // 0) ] | add // 0')
@@ -145,9 +146,12 @@ CATEGORIES=$(jq -n -c \
   --argjson wf "$WF_JSON" \
   --argjson sc "$SCN_JSON" \
   --argjson ig "$REGRESSION_JSON" \
+  --argjson rt "$RUNTIME_JSON" \
+  --arg rts "$(cat_status "${RUNTIME_RESULT:-skipped}")" \
   '[
     {name:"Unit Tests",        status:$us, tests:$u},
     {name:"Direct Action Tests",status:$as, tests:$a},
+    {name:"Runtime Environment Tests", status:$rts, tests:$rt},
     {name:"Remote Mode Tests", status:$rs, tests:$r},
     {name:"Discover Mode Tests",status:$ds, tests:$d},
     {name:"Combination Tests", status:$cs, tests:$co},
@@ -171,6 +175,7 @@ category_for() {
   case "$1" in
     test-unit)            echo "Unit Tests" ;;
     test-actions-direct)  echo "Direct Action Tests" ;;
+    test-runtime-env)     echo "Runtime Environment Tests" ;;
     test-remote)          echo "Remote Mode Tests" ;;
     test-discover)        echo "Discover Mode Tests" ;;
     test-combination)     echo "Combination Tests" ;;
@@ -192,17 +197,44 @@ scope_for() {
 }
 
 CATALOG_JSON='[]'
-for wf in test-unit test-actions-direct test-remote test-discover test-combination test-edge test-workflows test-scn-detector test-suite; do
+for wf in test-unit test-actions-direct test-runtime-env test-remote test-discover test-combination test-edge test-workflows test-scn-detector test-suite; do
   f="$WF_DIR/$wf.yml"
   [ -f "$f" ] || continue
-  # Pull the jq array literal the collect step builds, and blank out the shell
-  # variable references so it becomes parseable JSON.
+
+  # Two collect-step shapes exist, and only one was ever parsed here.
+  #
+  # (a) an inline jq array literal  -- test-unit, test-actions-direct,
+  #     test-runtime-env, test-suite
+  # (b) a /tmp/detail.json heredoc  -- test-remote, test-discover,
+  #     test-combination, test-edge, test-workflows
+  #
+  # Shape (b) yielded an empty `part`, which was then passed to
+  # `jq --argjson p ""` -- invalid JSON, non-zero exit, and under `set -e` the
+  # whole script died. That is why "Generate dashboard" has been failing on
+  # every dev run and the published site has no index.html. Five of the nine
+  # categories, and the 42 tests in them, were also missing from the search
+  # corpus, so the page would have answered "not tested" about things that are.
   part=$(sed -n "/^ *'\[$/,/^ *\]')$/p" "$f" \
     | sed -e "s/^ *'\[$/[/" -e "s/^ *\]')$/]/" \
     | sed -E 's/:\$[a-z0-9_]+/:null/g' \
     | jq -c --arg cat "$(category_for "$wf")" --arg file ".github/workflows/$wf.yml" \
            --arg scope "$(scope_for "$wf")" \
         '[.[] | {id, name, question: .detail, category: $cat, file: $file, scope: $scope}]' 2>/dev/null) || part=""
+
+  # Shape (b): the heredoc maps id -> [name, question]. Dedent it and read it
+  # as the object it already is.
+  if [ -z "$part" ] || [ "$part" = "[]" ]; then
+    part=$(awk "/cat > \/tmp\/detail.json <<'JSON'/{f=1;next} f&&/^ *JSON$/{exit} f" "$f" \
+      | sed -E 's/^ {10}//' \
+      | jq -c --arg cat "$(category_for "$wf")" --arg file ".github/workflows/$wf.yml" \
+             --arg scope "$(scope_for "$wf")" \
+          'to_entries | [.[] | {id: .key, name: .value[0], question: .value[1],
+                                category: $cat, file: $file, scope: $scope}]' 2>/dev/null) || part=""
+  fi
+
+  # Never hand an empty string to --argjson. A category that cannot be parsed
+  # must degrade to "no catalog entries", not take the whole board down.
+  [ -n "$part" ] || part='[]'
 
   # Line number of each test's job definition, so a row links to the source that
   # defines it instead of repeating the same run URL on every row. Job names look
@@ -226,11 +258,44 @@ echo "Test catalog entries: $(echo "$CATALOG_JSON" | jq 'length')"
 # ---------- coverage gaps (searchable "is this tested?" corpus) ----------
 GAPS_FILE="$SCRIPT_DIR/../data/coverage-gaps.json"
 if [ -f "$GAPS_FILE" ] && jq empty "$GAPS_FILE" 2>/dev/null; then
-  GAPS_JSON=$(jq -c '.' "$GAPS_FILE")
-  echo "Coverage gaps loaded: $(echo "$GAPS_JSON" | jq 'length')"
+  # The file was a bare array; it now carries _comment and _retired alongside
+  # a .gaps array. Accept both so an older checkout of the data file still
+  # renders rather than silently showing no gaps -- "nothing listed" and "no
+  # gaps" look identical on the page, which is the confusion this list exists
+  # to prevent.
+  GAPS_JSON=$(jq -c 'if type == "array" then . else (.gaps // []) end' "$GAPS_FILE")
+  RETIRED_JSON=$(jq -c 'if type == "array" then [] else (._retired // []) end' "$GAPS_FILE")
+  echo "Coverage gaps loaded: $(echo "$GAPS_JSON" | jq 'length') (retired: $(echo "$RETIRED_JSON" | jq 'length'))"
 else
   GAPS_JSON='[]'
+  RETIRED_JSON='[]'
   echo "WARNING: no readable $GAPS_FILE — search will not be able to answer 'not covered'"
+fi
+
+# ---------- ref liveness (which half of a branch run is actually the branch) --
+# Written by audit-ref-liveness.sh earlier in the job. Absent is not the same
+# as "everything is live", so a missing file renders as unknown.
+LIVENESS_FILE="${LIVENESS_FILE:-$OUT/ref-liveness.json}"
+if [ -f "$LIVENESS_FILE" ] && jq empty "$LIVENESS_FILE" 2>/dev/null; then
+  LIVENESS_JSON=$(jq -c '.' "$LIVENESS_FILE")
+  echo "Ref liveness loaded: sdk_live=$(jq -r '.summary.sdk_live' "$LIVENESS_FILE")"
+else
+  LIVENESS_JSON='null'
+  echo "No ref-liveness.json -- the board will not claim anything about which parts of the ref are live"
+fi
+
+# ---------- cleanliness (KISS/DRY panel) --------------------------------------
+CLEAN_FILE="${CLEAN_FILE:-$OUT/cleanliness.json}"
+if [ -f "$CLEAN_FILE" ] && jq empty "$CLEAN_FILE" 2>/dev/null; then
+  CLEAN_JSON=$(jq -c '.' "$CLEAN_FILE")
+else
+  CLEAN_JSON='null'
+fi
+CLEAN_CFG_FILE="$SCRIPT_DIR/../data/cleanliness-metrics.json"
+if [ -f "$CLEAN_CFG_FILE" ] && jq empty "$CLEAN_CFG_FILE" 2>/dev/null; then
+  CLEAN_CFG_JSON=$(jq -c '{targets, metrics, references}' "$CLEAN_CFG_FILE")
+else
+  CLEAN_CFG_JSON='null'
 fi
 
 HISTORY_DATA=$(cat "$HISTORY_FILE")
@@ -617,6 +682,23 @@ tr.hidden { display: none; }
 mark { background: rgba(240,173,78,0.28); color: inherit; padding: 0 2px; }
 .empty { padding: 44px 12px; text-align: center; color: var(--fg3); font-size: 0.85rem; }
 .none { color: var(--fg3); }
+.chip { display:inline-block; padding:1px 7px; border:1px solid var(--border); font-size:0.68rem;
+        font-weight:600; letter-spacing:0.04em; text-transform:uppercase; white-space:nowrap; cursor:help; }
+.chip-warn { color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn); }
+.chip-ok   { color: var(--pass-ink); background: var(--pass-bg); border-color: var(--pass); }
+.clean { margin-top: 40px; }
+.clean h2 { font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:var(--track);
+            color:var(--fg); margin:0 0 4px; }
+.clean .sub { font-size:0.78rem; color:var(--fg3); margin:0 0 14px; max-width:70ch; }
+.clean-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
+.clean-card { border:1px solid var(--border); padding:12px 14px; }
+.clean-card .t { font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--fg3); }
+.clean-card .v { font-size:1.5rem; font-weight:300; color:var(--fg); margin:4px 0 2px; }
+.clean-card .v.na { font-size:0.85rem; color:var(--fg3); font-weight:400; }
+.clean-card .d { font-size:0.72rem; color:var(--fg3); line-height:1.45; }
+.clean-card .tag { display:inline-block; font-size:0.6rem; font-weight:700; letter-spacing:0.08em;
+                   border:1px solid var(--border); padding:0 4px; margin-left:6px; color:var(--fg3); vertical-align:middle; }
+@media (max-width: 640px) { .clean-grid { grid-template-columns: 1fr; } }
 footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--fg3); }
 
 /* theme toggle */
@@ -684,6 +766,8 @@ footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border
   </table>
   <div class="empty" id="empty" style="display:none"></div>
 
+  <section class="clean" id="clean" hidden></section>
+
   <footer id="foot"></footer>
 </div>
 <div class="tip" id="tip" style="display:none"></div>
@@ -711,6 +795,10 @@ HTMLEOF
   echo "  selfSha: \"${SELF_SHA:-main}\","
   printf '  categories: %s,\n' "$CATEGORIES"
   printf '  gaps: %s,\n' "$GAPS_JSON"
+  printf '  retiredGaps: %s,\n' "$RETIRED_JSON"
+  printf '  liveness: %s,\n' "$LIVENESS_JSON"
+  printf '  cleanliness: %s,\n' "$CLEAN_JSON"
+  printf '  cleanlinessCfg: %s,\n' "$CLEAN_CFG_JSON"
   printf '  failureClasses: %s,\n' "$CLASSES_JSON"
   printf '  catalog: %s,\n' "$CATALOG_JSON"
   printf '  jobs: %s,\n' "${JOBS_JSON:-[]}"
@@ -758,6 +846,24 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
                 ' <a class="mono" href="' + server + '/' + d.argusRepo + '/commit/' + d.argusSha + '">' + esc(d.argusShaShort) + '</a>');
     } else {
       meta.push('argus@' + esc(d.argusRef || 'main'));
+    }
+  }
+  // What of this ref is actually under test. A branch run gets the branch's
+  // workflow YAML, but nested actions -- including setup-argus, which installs
+  // the SDK -- keep the release pin written into that file. Naming a ref while
+  // silently testing released Python for half of it is worse than saying
+  // nothing, so the split is stated next to the ref rather than in a footnote.
+  if (d.liveness && d.liveness.summary) {
+    const L = d.liveness.summary;
+    if (L.sdk_live === false) {
+      const pins = (L.sdk_pins || []).join(', ') || 'a release tag';
+      meta.push('<span class="chip chip-warn" title="' +
+        esc('The workflow YAML comes from ' + (L.ref || 'this ref') + ', but every nested reference is pinned: ' +
+            L.stale_nested + ' pinned vs ' + L.live_nested + ' live. setup-argus installs the SDK from its own checkout, so the Python under test is ' + pins +
+            '. SDK-level behaviour is covered by the Runtime Environment tests (N1-N5), which check argus out at the ref.') +
+        '">YAML from ref &middot; SDK <span class="mono">' + esc(pins) + '</span></span>');
+    } else if (L.sdk_live === true) {
+      meta.push('<span class="chip chip-ok" title="Workflow YAML and SDK both resolve to this ref.">fully branch-live</span>');
     }
   }
   meta.push(esc(d.date));
@@ -1412,6 +1518,7 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
     'fail-open': function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'open'; },
     'fail-closed': function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'closed'; },
     degraded: function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'degraded'; },
+    auxiliary: function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'auxiliary'; },
     tests: function (x) { return x.kind === 'test'; },
     gap: function (x) { return x.kind === 'gap'; },
     untested: function (x) { return x.kind === 'untested'; },
@@ -1629,6 +1736,101 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
     }
   });
 
+  // ------------------------------------------------------------- cleanliness
+  // KISS/DRY, reported and never gated. Two targets side by side and never
+  // summed: tidy tests must not offset untidy source, and a combined number
+  // would also make this board assert something about argus's internals that
+  // its maintainers have not signed up to.
+  //
+  // A metric that could not be computed renders "not measured", not 0. Zero
+  // and "no tool available" look identical otherwise, and the second is the
+  // absence of evidence rather than evidence of cleanliness.
+  (function renderCleanliness() {
+    const C = d.cleanliness, CFG = d.cleanlinessCfg;
+    if (!C || !CFG || !C.targets) return;
+    const host = $('clean');
+    if (!host) return;
+
+    function card(title, value, detail, tag, na) {
+      return '<div class="clean-card">' +
+             '<div class="t">' + esc(title) + (tag ? '<span class="tag">' + esc(tag) + '</span>' : '') + '</div>' +
+             '<div class="v' + (na ? ' na' : '') + '">' + esc(value) + '</div>' +
+             '<div class="d">' + detail + '</div></div>';
+    }
+
+    let html = '';
+    ['suite', 'argus'].forEach(function (key) {
+      const t = C.targets[key], cfg = (CFG.targets || {})[key];
+      if (!t || !cfg) return;
+      let cards = '';
+
+      // --- duplication (DRY) ---
+      const m = (CFG.metrics || {}).duplication || {};
+      if (t.duplication && t.duplication.percent !== null && t.duplication.percent !== undefined) {
+        const pct = Number(t.duplication.percent).toFixed(1);
+        cards += card(m.label || 'Duplicated lines', pct + '%',
+          esc(t.duplication.clones + ' clone group(s), ' + t.duplication.duplicated_lines +
+              ' of ' + t.duplication.total_lines + ' lines.') +
+          '<br><span title="' + esc(m.caveat || '') + '" style="cursor:help;text-decoration:underline dotted">caveat</span>',
+          'DRY');
+      } else {
+        cards += card(m.label || 'Duplicated lines', 'not measured',
+          'No clone detector available in this run. Absent is not zero.', 'DRY', true);
+      }
+
+      // --- cognitive complexity (KISS) ---
+      const mc = (CFG.metrics || {}).cognitive || {};
+      if (t.cognitive && t.cognitive.worst !== null && t.cognitive.worst !== undefined) {
+        cards += card(mc.label || 'Cognitive complexity', String(t.cognitive.worst),
+          esc(String(t.cognitive.over_threshold) + ' of ' + t.cognitive.units +
+              ' unit(s) over ' + t.cognitive.threshold +
+              (t.cognitive.worst_at ? '. Worst: ' + t.cognitive.worst_at : '')),
+          'KISS');
+      } else {
+        cards += card(mc.label || 'Cognitive complexity', 'not applicable',
+          'No implementation parses Actions YAML or shell. Reported blank rather than substituting a metric that measures something else.',
+          'KISS', true);
+      }
+
+      // --- duplicate test tuples (DRY, suite only) ---
+      const mt = (CFG.metrics || {}).tuple_dupes || {};
+      if (t.tuple_dupes) {
+        const td = t.tuple_dupes;
+        const unexplained = (td.exact_rows || 0) + (td.invocation_rows || 0);
+        let detail = esc(td.rows + ' matrix rows. ' + (td.exact_rows || 0) +
+                         ' exact duplicate(s), ' + (td.invocation_rows || 0) +
+                         ' duplicate invocation(s)');
+        const ex = (td.exempted || []);
+        if (ex.length) {
+          detail += esc(', ' + ex.length + ' annotated as deliberate') +
+                    ' <span title="' + esc(ex.map(function (g) {
+                      return g.tests.join(' = ') + ': ' + g.allowed;
+                    }).join(' | ')) + '" style="cursor:help;text-decoration:underline dotted">(which)</span>';
+        }
+        detail += '.';
+        cards += card(mt.label || 'Duplicate test tuples', String(unexplained), detail, 'DRY');
+      }
+
+      html += '<div style="margin-bottom:18px"><div class="t" style="font-size:0.7rem;font-weight:700;' +
+              'text-transform:uppercase;letter-spacing:0.06em;color:var(--fg);margin-bottom:8px">' +
+              esc(cfg.label) + '</div>' +
+              '<div class="clean-grid">' + cards + '</div>' +
+              '<div class="d" style="font-size:0.72rem;color:var(--fg3);margin-top:7px">' +
+              esc(cfg.note || '') + '</div></div>';
+    });
+
+    if (!html) return;
+    host.innerHTML =
+      '<h2>Code cleanliness</h2>' +
+      '<p class="sub">KISS and DRY indicators, reported and never gated \u2014 a red build here would have to mean ' +
+      'argus broke, not that a function grew. The two targets are never summed. Cyclomatic complexity, Halstead ' +
+      'and the Maintainability Index are deliberately absent: the first correlates about 0.9 with raw line count ' +
+      'and the others have no dependable independent predictive value. Rationale and citations are in ' +
+      '<span class="mono">.github/data/cleanliness-metrics.json</span>.</p>' +
+      html;
+    host.hidden = false;
+  })();
+
   $('foot').innerHTML =
     '<div class="footnotes"><div class="fn-head">References</div>' +
     REFS.map(function (r) {
@@ -1640,7 +1842,8 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
     }).join('') + '</div>' +
     '<div class="foot-meta">Generated by the test suite CI on every push. ' +
     'Weights live in <span class="mono">.github/data/failure-classes.json</span>; ' +
-    'coverage gaps in <span class="mono">.github/data/coverage-gaps.json</span>.</div>';
+    'coverage gaps in <span class="mono">.github/data/coverage-gaps.json</span>; ' +
+    'cleanliness metrics in <span class="mono">.github/data/cleanliness-metrics.json</span>.</div>';
 
   // Theme: follow the OS by default, let the reader override, remember it.
   // Storage can throw in private windows, so every access is guarded.

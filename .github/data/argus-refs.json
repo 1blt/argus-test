@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Refs of huntridge-labs/argus this suite can be pointed at.",
+    "",
+    "WHY THIS FILE EXISTS. A reusable-workflow `uses:` reference cannot be an",
+    "expression -- GitHub resolves it when the workflow is parsed, before any",
+    "input is available. So `uses: .../container-scan.yml@${{ inputs.argus_ref }}`",
+    "is not expressible, and a dispatch target has to name every ref it can run",
+    "as a literal, one job per ref, selected by `if:`.",
+    "",
+    "That makes the enumeration the contract. This file is the single place it",
+    "is written down; the four dispatch targets mirror it, and I4 fails if they",
+    "drift. Adding a ref means editing this file AND adding a job to each target",
+    "in `targets` below.",
+    "",
+    "The alternative -- defaulting an unrecognised ref to main -- is the exact",
+    "failure this suite exists to catch: a run that reports a ref it did not",
+    "test. argus-scan and argus-dispatch refuse to dispatch an unlisted ref, and",
+    "each target carries a guard job that fails for the same reason."
+  ],
+  "default": "main",
+  "refs": [
+    {
+      "ref": "main",
+      "kind": "branch",
+      "note": "Default branch. What a consumer pinning @main gets today."
+    },
+    {
+      "ref": "fix/container-scan-no-silent-pass",
+      "kind": "branch",
+      "note": "argus PR #427. Adds validate-inputs, nine workflow_call outputs, search_paths/platform/fail_on_no_targets, and the argus_scan_incomplete sentinel. See ref-liveness: only the workflow YAML is branch-live, not the SDK."
+    }
+  ],
+  "targets": [
+    "argus-run.yml",
+    "argus-hardening-run.yml",
+    "argus-iac-run.yml",
+    "argus-config-run.yml"
+  ]
+}

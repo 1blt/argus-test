@@ -23,6 +23,15 @@ inputs:
     required: true
   test_id:
     required: true
+  argus_ref:
+    description: >
+      argus ref to call. Injected into inputs_json as `argus_ref`, so every
+      dispatch target routes to its matching `uses:` job. Must be listed in
+      .github/data/argus-refs.json -- an unlisted ref matches no job in the
+      target, so every scan job would be skipped and the run would still
+      conclude 'success', reporting a pass for a ref nothing ran against.
+    required: false
+    default: 'main'
   timeout_seconds:
     required: false
     default: '1800'
@@ -48,12 +57,25 @@ runs:
         EXPECT: ${{ inputs.expect }}
         TEST_ID: ${{ inputs.test_id }}
         TIMEOUT_S: ${{ inputs.timeout_seconds }}
+        ARGUS_REF: ${{ inputs.argus_ref }}
       run: |
         set -uo pipefail
         fail() { echo "::error::$1"; echo "status=FAIL" >> "$GITHUB_OUTPUT"; exit 1; }
 
+        # Refuse an unenumerated ref before spending a run on it. See the
+        # identical guard in argus-scan for why a silent fallback to main is
+        # the exact failure this suite exists to catch.
+        REFS_FILE=".github/data/argus-refs.json"
+        if [ -f "$REFS_FILE" ]; then
+          if ! jq -r '.refs[].ref' "$REFS_FILE" | grep -Fxq "$ARGUS_REF"; then
+            fail "$TEST_ID: argus_ref '$ARGUS_REF' is not enumerated in $REFS_FILE. Add it there and add a matching job to every dispatch target."
+          fi
+        else
+          echo "::warning::$REFS_FILE not found (no checkout?) -- skipping the client-side ref check; the dispatch target still guards it."
+        fi
+
         MARKER="${TEST_ID}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-        echo "marker: $MARKER   workflow: $WF"
+        echo "marker: $MARKER   workflow: $WF   argus_ref: $ARGUS_REF"
 
         echo "$INPUTS_JSON" | jq -e . >/dev/null 2>&1 || fail "inputs_json is not valid JSON: $INPUTS_JSON"
 
@@ -62,7 +84,8 @@ runs:
         # with "cannot unmarshal bool into Go value of type string". Coerce
         # here so no caller has to remember it.
         echo "$INPUTS_JSON" \
-          | jq -c --arg m "$MARKER" '. + {marker: $m} | with_entries(.value |= tostring)' \
+          | jq -c --arg m "$MARKER" --arg r "$ARGUS_REF" \
+              '. + {marker: $m, argus_ref: $r} | with_entries(.value |= tostring)' \
           > /tmp/dispatch-inputs.json
         cat /tmp/dispatch-inputs.json
 

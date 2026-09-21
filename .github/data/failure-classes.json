@@ -16,42 +16,67 @@
     "here rather than in the rendering code.",
     "",
     "Default is 'closed': a test that goes red without a declared class is",
-    "assumed to be argus breaking loudly, not argus lying."
+    "assumed to be argus breaking loudly, not argus lying.",
+    "",
+    "ON THE WORD 'DEGRADED'. This file used to spend 'degraded' on 'something",
+    "alongside the scan broke, such as uploading a report'. argus PR #427",
+    "introduces ContainerScanResult.degraded for a different fact: a default",
+    "sub-scanner could not run, so the scan is THINNER than it looks. Two facts",
+    "cannot share one word on a board that reports both, so the local meaning was",
+    "renamed to 'auxiliary' and 'degraded' now tracks upstream.",
+    "",
+    "They are not worth the same. An auxiliary breakage -- a SARIF upload that",
+    "failed -- leaves the scan and the gate intact, so it stays at weight 1. A",
+    "degraded scan is reduced assurance: the gate held, but over less than the",
+    "caller believes, and the difference is invisible unless the missing",
+    "sub-scanners are named. It sits at 6: above a loud refusal to run (3),",
+    "because a refusal tells you plainly that you have no result, and below a",
+    "silent pass (10), because a degraded scan at least did some of the work and",
+    "is supposed to say so."
   ],
   "_status_note": [
     "The word is the TEST OUTCOME, not a verdict on argus. A dashboard that",
     "labels a product 'unsafe' on the strength of assertions its maintainers",
-    "have not agreed to is overstepping -- E5 and E9 encode what this suite",
-    "thinks argus should do, and that question is open. The severity lives in",
-    "the risk number, the class counts and the sentence, all of which describe",
-    "what was observed rather than what to conclude."
+    "have not agreed to is overstepping. The severity lives in the risk number,",
+    "the class counts and the sentence, all of which describe what was observed",
+    "rather than what to conclude.",
+    "",
+    "E5 and E9 used to be called out here as known-open findings -- argus",
+    "reporting success having scanned nothing. argus PR #427 closes both with a",
+    "validate-inputs job, and that job is pure bash in container-scan.yml itself,",
+    "so it is live on a branch run rather than waiting on an SDK release. The",
+    "call-out is gone: if they go red now it is a regression, not a known state."
   ],
   "default": "closed",
   "weights": {
     "open": 10,
+    "degraded": 6,
     "closed": 3,
-    "degraded": 1
+    "auxiliary": 1
   },
   "labels": {
     "open": "fail-open",
+    "degraded": "degraded scan",
     "closed": "fail-closed",
-    "degraded": "degraded"
+    "auxiliary": "auxiliary breakage"
   },
   "short": {
     "open": "fail-open",
+    "degraded": "thinner scan",
     "closed": "fail-closed",
-    "degraded": "degraded"
+    "auxiliary": "auxiliary"
   },
   "glossary": {
     "open": "argus reported success without actually running the check. Nothing warns you, so unscanned code can ship looking approved.",
+    "degraded": "argus ran, but with fewer sub-scanners than the caller asked for or expected. The gate held over less than it appears to -- and if the missing sub-scanners are not named, you cannot tell this apart from a full scan.",
     "closed": "argus stopped or errored when it should have worked. Your pipeline blocks, which is disruptive, but nothing slips past unnoticed.",
-    "degraded": "Something alongside the scan broke, such as uploading a report. The scan itself ran and the gate still held, so nothing unsafe got through."
+    "auxiliary": "Something alongside the scan broke, such as uploading a report. The scan itself ran at full strength and the gate held, so nothing unsafe got through."
   },
   "status": {
     "open": {
       "word": "FAIL",
       "tone": "bad",
-      "line": "2 tests report success without scanning \u2014 see E5, E9"
+      "line": "at least one test reports success without scanning -- see the failing rows"
     },
     "closed": {
       "word": "FAIL",
@@ -60,13 +85,18 @@
     },
     "degraded": {
       "word": "FAIL",
-      "tone": "warn",
-      "line": "an auxiliary path is broken; scans and gates still work"
+      "tone": "bad",
+      "line": "a scan ran with fewer sub-scanners than were asked for"
     },
     "none": {
       "word": "PASS",
       "tone": "good",
       "line": "every defined test that ran, passed"
+    },
+    "auxiliary": {
+      "word": "FAIL",
+      "tone": "warn",
+      "line": "an auxiliary path is broken; scans and gates still work"
     }
   },
   "index": {
@@ -76,26 +106,35 @@
   },
   "descriptions": {
     "open": "argus reported success without actually running the check. Nothing warns you, so unscanned code can ship looking approved.",
+    "degraded": "argus ran, but with fewer sub-scanners than the caller asked for or expected. The gate held over less than it appears to -- and if the missing sub-scanners are not named, you cannot tell this apart from a full scan.",
     "closed": "argus stopped or errored when it should have worked. Your pipeline blocks, which is disruptive, but nothing slips past unnoticed.",
-    "degraded": "Something alongside the scan broke, such as uploading a report. The scan itself ran and the gate still held, so nothing unsafe got through."
+    "auxiliary": "Something alongside the scan broke, such as uploading a report. The scan itself ran at full strength and the gate held, so nothing unsafe got through."
   },
   "classes": {
     "open": [
-      "R6",
       "C3",
       "C4",
       "C5",
       "C6",
       "D3",
       "D4",
+      "D5",
       "E5",
       "E8",
       "E9",
+      "N2",
+      "N3",
+      "R6",
       "S13",
       "S14",
-      "S18"
+      "S18",
+      "W4"
     ],
     "degraded": [
+      "N1",
+      "N5"
+    ],
+    "auxiliary": [
       "E11",
       "E14",
       "S16",
