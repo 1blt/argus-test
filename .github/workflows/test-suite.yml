@@ -975,7 +975,7 @@ jobs:
           SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
           mkdir -p "_site/$OTHER/tests" "_site/$OTHER/code-cleanliness"
           KEPT=0
-          for f in index.html history.json favicon.png \
+          for f in index.html history.json cleanliness.json favicon.png \
                    tests/index.html code-cleanliness/index.html; do
             if curl -sSf "$SITE/$OTHER/$f" -o "_site/$OTHER/$f" 2>/dev/null; then
               KEPT=$((KEPT + 1))
@@ -997,6 +997,17 @@ jobs:
       # policy, so a branch that is not allowed to deploy never appears here --
       # better than a card linking to a 404. With only one branch published the
       # root just forwards to it, so the site has no dead ends either way.
+      # cleanliness.json follows its branch into the published site. The root
+      # index reads each branch's copy to show that branch's figures, exactly
+      # as it reads history.json -- staging is deleted below, so anything the
+      # root needs has to be moved out of it first.
+      - name: Keep the cleanliness figures with the branch
+        run: |
+          if [ -f _site/liveness/cleanliness.json ]; then
+            cp _site/liveness/cleanliness.json "_site/${{ env.branch_dir }}/cleanliness.json"
+            echo "Kept cleanliness.json for ${{ env.branch_dir }}"
+          fi
+
       # The site root: one card per published branch, with that branch's
       # headline figures. Read from each <branch>/history.json rather than
       # recomputed, so the root cannot disagree with the board it links to.

@@ -532,6 +532,7 @@ argus-test/
 ├── main/
 │   ├── index.html                   summary hub — risk, pass rate, ref, links
 │   ├── history.json                 last 20 runs, for the score chart
+│   ├── cleanliness.json             figures the root index reads
 │   ├── favicon.png
 │   ├── tests/
 │   │   └── index.html               the dashboard: every test, searchable
@@ -543,9 +544,20 @@ argus-test/
 
 The site root lists every published branch as a card carrying that branch's
 risk index, pass rate, passed-of-defined, last-run time and movement against
-its previous run, plus direct links to its three pages. The figures are read
-from each branch's `history.json` rather than recomputed, so the root cannot
-disagree with the board it links to.
+its previous run, then a separate, lighter line with its cleanliness figures —
+duplication, duplicate tuples, argus cognitive complexity — plus direct links
+to its three pages.
+
+Cleanliness sits on its own line rather than joining the figures above it. The
+row above is the verdict; cleanliness is reported and gates nothing, and
+putting a duplication percentage beside the risk index would read as though it
+were part of whether argus works.
+
+Both sets are read from files the branch publishes — `history.json` and
+`cleanliness.json` — rather than recomputed, so the root cannot disagree with
+the pages it links to. A branch whose metrics did not run renders
+*not measured* rather than being omitted, so it cannot look tidier than one
+whose did.
 
 The branch root is a **hub**, not a page of its own findings. It carries the
 risk index and pass rate, the ref under test with its liveness split, and one

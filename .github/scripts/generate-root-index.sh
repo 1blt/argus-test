@@ -51,6 +51,22 @@ for b in $BRANCHES; do
   fi
   HAS_CLEAN=false
   [ -f "$SITE_DIR/$b/code-cleanliness/index.html" ] && HAS_CLEAN=true
+  # The branch's own figures, kept beside its history.json. Absent is rendered
+  # as "not measured" rather than omitted: a branch whose metrics did not run
+  # must not look tidier than one whose did.
+  CLEAN='null'
+  CF="$SITE_DIR/$b/cleanliness.json"
+  if [ -f "$CF" ] && jq empty "$CF" 2>/dev/null; then
+    CLEAN=$(jq -c '{
+      dup:    (.targets.suite.duplication.percent // null),
+      tuples: (if .targets.suite.tuple_dupes
+               then ((.targets.suite.tuple_dupes.exact_rows // 0)
+                   + (.targets.suite.tuple_dupes.invocation_rows // 0))
+               else null end),
+      cog:    (.targets.argus.cognitive.worst // null),
+      argusDup: (.targets.argus.duplication.percent // null)
+    }' "$CF")
+  fi
   HAS_TESTS=false
   [ -f "$SITE_DIR/$b/tests/index.html" ] && HAS_TESTS=true
 
@@ -60,7 +76,8 @@ for b in $BRANCHES; do
     --argjson prev "$PREV" \
     --argjson clean "$HAS_CLEAN" \
     --argjson tests "$HAS_TESTS" \
-    '. + [{branch:$b, latest:$latest, prev:$prev, hasClean:$clean, hasTests:$tests}]' \
+    --argjson metrics "$CLEAN" \
+    '. + [{branch:$b, latest:$latest, prev:$prev, hasClean:$clean, hasTests:$tests, metrics:$metrics}]' \
     <<<"$CARDS")
 done
 
@@ -143,7 +160,10 @@ h1 { font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing
 .bs .n.bad { color:var(--fail-ink); } .bs .n.warn { color:var(--warn-ink); }
 .bs .n.good { color:var(--pass-ink); }
 .bs .l { font-size:0.6rem; text-transform:uppercase; letter-spacing:0.07em; color:var(--fg3); }
-.bline { font-size:0.75rem; color:var(--fg3); padding:0 20px 14px; }
+.bline { font-size:0.75rem; color:var(--fg3); padding:0 20px 10px; }
+.bclean { font-size:0.72rem; color:var(--fg3); padding:0 20px 14px; }
+.clabel { font-size:0.6rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em;
+          color:var(--fg3); border:1px solid var(--border); padding:0 5px; margin-right:7px; }
 .blinks { display:flex; gap:0; border-top:1px solid var(--rule); }
 .blinks a { flex:1; text-align:center; padding:10px 12px; font-size:0.68rem; font-weight:700;
             text-transform:uppercase; letter-spacing:0.07em; color:var(--fg3);
@@ -221,6 +241,24 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
           ' &middot; scope <span class="mono">' + esc(h.scope || 'all') + '</span></div>';
     }
 
+    // Cleanliness sits on its own line, labelled and lighter, rather than
+    // joining the figures above. Those are the verdict; these are reported and
+    // gate nothing, and putting them in the same row would read as though a
+    // duplication percentage were part of whether argus works.
+    var cl = '';
+    if (b.metrics) {
+      var m = b.metrics, parts = [];
+      parts.push(m.dup    != null ? Number(m.dup).toFixed(1) + '% duplicated' : 'duplication not measured');
+      if (m.tuples != null) {
+        parts.push(m.tuples + ' duplicate tuple' + (m.tuples === 1 ? '' : 's'));
+      }
+      parts.push(m.cog != null ? 'argus cognitive ' + m.cog : 'argus cognitive not measured');
+      cl = '<div class="bclean"><span class="clabel">Cleanliness</span> ' +
+           esc(parts.join('  \u00b7  ')) + '</div>';
+    } else if (b.hasClean) {
+      cl = '<div class="bclean"><span class="clabel">Cleanliness</span> figures not published for this run</div>';
+    }
+
     var links = '<a href="' + esc(b.branch) + '/">Summary</a>';
     if (b.hasTests) links += '<a href="' + esc(b.branch) + '/tests/">Test results</a>';
     if (b.hasClean) links += '<a href="' + esc(b.branch) + '/code-cleanliness/">Code cleanliness</a>';
@@ -230,7 +268,7 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
              '<a class="bhead" href="' + esc(b.branch) + '/">' +
                '<span class="bname">' + esc(b.branch) + '</span>' +
                (h ? '<span class="bwhen">' + esc(h.date) + '</span>' : '') +
-             '</a>' + body +
+             '</a>' + body + cl +
              '<div class="blinks">' + links + '</div>' +
            '</div>';
   }).join('');
