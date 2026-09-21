@@ -160,18 +160,74 @@ cognitive_python() {
   local root="$1" pkg="$2"
   [ -d "$root/$pkg" ] || { echo '{"error":"the package directory is not present in this checkout"}'; return; }
   have python3 || { echo '{"error":"python3 is not on PATH"}'; return; }
+  # Best effort. The breakdown below is pure AST and needs nothing installed,
+  # so a failed pip must not take the metric down with it -- it only decides
+  # whether the reference implementation or our own arithmetic produces the
+  # headline number, and the page says which.
   python3 -c 'import cognitive_complexity' 2>/dev/null \
-    || pip install --quiet cognitive-complexity >/dev/null 2>&1 \
-    || { echo '{"error":"could not install the cognitive-complexity package"}'; return; }
+    || pip install --quiet cognitive-complexity >/dev/null 2>&1 || true
 
   python3 - "$root/$pkg" <<'PY' 2>/dev/null || echo '{"error":"the python pass raised"}'
 import ast, json, sys, pathlib
 try:
     from cognitive_complexity.api import get_cognitive_complexity
+    ENGINE = "reference implementation"
 except Exception:
-    print(json.dumps({"error": "cognitive_complexity import failed"})); sys.exit(0)
+    get_cognitive_complexity = None
+    ENGINE = "same rules as the shell pass (reference package unavailable)"
 
 THRESHOLD = 15
+
+
+def breakdown(fn):
+    """Which constructs produced the score, and what each contributed.
+
+    The reference implementation returns a number and nothing else, so the
+    argus column read "102" with an empty explanation -- a figure nobody can
+    check or act on. This walks the same nodes Campbell's rules increment on
+    and reports the arithmetic beside it.
+
+    It EXPLAINS the score rather than deriving it: the authoritative number
+    stays the library's. Where the two disagree the page says so, which is
+    better than quietly showing a total nobody can reproduce.
+    """
+    counts, total = {}, 0
+
+    def bump(kind, n):
+        nonlocal total
+        if n:
+            counts[kind] = counts.get(kind, 0) + n
+            total += n
+
+    NEST = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With,
+            ast.AsyncWith, ast.ExceptHandler)
+
+    def walk(node, depth):
+        for child in ast.iter_child_nodes(node):
+            inc, nxt = 0, depth
+            if isinstance(child, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+                inc, nxt = 1, depth + 1
+                bump(type(child).__name__.lower(), 1)
+            elif isinstance(child, ast.ExceptHandler):
+                inc, nxt = 1, depth + 1
+                bump("except", 1)
+            elif isinstance(child, ast.BoolOp):
+                bump("and/or", 1)
+            elif isinstance(child, ast.IfExp):
+                bump("ternary", 1)
+            elif isinstance(child, (ast.Break, ast.Continue)):
+                bump("break/continue", 1)
+            elif isinstance(child, NEST):
+                nxt = depth + 1
+            if inc and depth:
+                bump("nesting", depth)
+            walk(child, nxt)
+
+    walk(fn, 0)
+    counts["= explained"] = total
+    return counts
+
+
 units = []
 root = pathlib.Path(sys.argv[1]).parent   # the checkout root, not the package
 for f in pathlib.Path(sys.argv[1]).rglob("*.py"):
@@ -183,13 +239,17 @@ for f in pathlib.Path(sys.argv[1]).rglob("*.py"):
         continue
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            try:
-                c = get_cognitive_complexity(node)
-            except Exception:
-                continue
+            why = breakdown(node)
+            if get_cognitive_complexity is not None:
+                try:
+                    c = get_cognitive_complexity(node)
+                except Exception:
+                    c = why.get("= explained", 0)
+            else:
+                c = why.get("= explained", 0)
             # relative to the checkout root, so the page can build a blob URL
             units.append({"file": str(f.relative_to(root)), "name": node.name,
-                          "line": node.lineno, "score": c})
+                          "line": node.lineno, "score": c, "why": why})
 units.sort(key=lambda u: -u["score"])
 print(json.dumps({
     "worst": units[0]["score"] if units else 0,
@@ -197,7 +257,7 @@ print(json.dumps({
     "over_threshold": sum(1 for u in units if u["score"] > THRESHOLD),
     "threshold": THRESHOLD,
     "units": len(units),
-    "language": "python",
+    "language": "python (" + ENGINE + ")",
     "top": units[:8],
 }))
 PY
@@ -253,6 +313,12 @@ def mask_heredocs(lines):
     return out
 
 def score_lines(lines, start_at=1):
+    """Campbell's rules, recording the arithmetic as well as the total.
+
+    `why` used to count constructs only, so it did not add up to the score --
+    the nesting surcharge was invisible and the number could not be checked by
+    hand. Nesting is now its own entry, and base + nesting == total.
+    """
     depth, total, why = 0, 0, {}
     def bump(kind, n):
         why[kind] = why.get(kind, 0) + n
@@ -270,6 +336,8 @@ def score_lines(lines, start_at=1):
         if m:
             total += 1 + depth
             bump(m.group(1), 1)
+            if depth:
+                bump("nesting", depth)     # the surcharge, made visible
             depth += 1
             if m.group(1) == 'case':
                 in_case += 1

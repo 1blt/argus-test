@@ -77,6 +77,7 @@ jobs:
     outputs:
       n1: ${{ steps.assert.outputs.n1 }}
       n2: ${{ steps.assert.outputs.n2 }}
+      reason: ${{ steps.assert.outputs.reason }}
     steps:
       - uses: actions/checkout@v4
 
@@ -93,6 +94,22 @@ jobs:
 
       - name: Install argus from the ref under test
         run: pip install --quiet ./argus-checkout
+
+      # The vulnerability databases are ~200MB and were downloaded fresh on
+      # every run. One of those downloads failed -- "Failed to activate
+      # downloaded database" -- grype exited 1, argus correctly treated a
+      # REQUESTED scanner as failed, and N1 reported it as blocker 1. Cache
+      # them per day so a run normally reuses yesterday's and the assertion
+      # stops depending on a 200MB download succeeding.
+      - name: Cache scanner databases
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/grype/db
+            ~/.cache/trivy
+          key: scannerdb-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            scannerdb-${{ runner.os }}-
 
       - name: Install trivy and grype as plain binaries
         run: |
@@ -153,6 +170,38 @@ jobs:
           done
           echo "  trivy: $(command -v trivy)"
           echo "  grype: $(command -v grype)"
+
+          # PREFLIGHT. N1 asserts that sub-scanners the caller did NOT ask for
+          # cannot fail the scan. That only means anything if the ones that
+          # WERE asked for can run: if grype's database will not load, argus
+          # exiting non-zero is correct behaviour and N1 would be reporting a
+          # broken download as an argus defect. It did exactly that once.
+          PRE_OK=true
+          for sc in trivy grype; do
+            if ! "$sc" version >/dev/null 2>&1 && ! "$sc" --version >/dev/null 2>&1; then
+              echo "::warning::$sc is not runnable"; PRE_OK=false; continue
+            fi
+          done
+          # A real scan of a tiny image is the only honest check that the
+          # database is usable; --version says nothing about it.
+          if [ "$PRE_OK" = "true" ]; then
+            if ! trivy image --quiet --scanners vuln --format json alpine:3.18 >/dev/null 2>&1; then
+              echo "::warning::trivy cannot complete a scan (database unavailable?)"; PRE_OK=false
+            fi
+            if ! grype alpine:3.18 -o json >/dev/null 2>&1; then
+              echo "::warning::grype cannot complete a scan (database unavailable?)"; PRE_OK=false
+            fi
+          fi
+          if [ "$PRE_OK" != "true" ]; then
+            echo "::warning title=N1/N2 preconditions unmet::A requested scanner cannot run on this host -- usually a vulnerability-database download that failed. argus exiting non-zero would then be correct, so this test cannot distinguish that from the behaviour it is asserting. Recorded as no assurance."
+            {
+              echo "n1=skip"
+              echo "n2=skip"
+              echo "reason=A requested scanner (trivy or grype) could not complete a scan on this runner, usually a failed vulnerability-database download. argus refusing the scan is correct in that case, so this test could not isolate the behaviour it asserts."
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "  preflight: both scanners complete a real scan"
 
           N1=FAIL
           N2=FAIL
@@ -512,6 +561,7 @@ jobs:
           PAIR_RESULT: ${{ needs.n1-n2-daemonless.result }}
           N1_RAW: ${{ needs.n1-n2-daemonless.outputs.n1 }}
           N2_RAW: ${{ needs.n1-n2-daemonless.outputs.n2 }}
+          PAIR_WHY: ${{ needs.n1-n2-daemonless.outputs.reason }}
           N3: ${{ needs.n3-unscannable-exit-code.result }}
           N4: ${{ needs.n4-retry-platform.result }}
           N4_RAW: ${{ needs.n4-retry-platform.outputs.verdict }}
@@ -544,14 +594,15 @@ jobs:
           RESULTS=$(jq -n -c \
             --arg n1 "$(half "$N1_RAW" "$PAIR_RESULT")" \
             --arg n2 "$(half "$N2_RAW" "$PAIR_RESULT")" \
+            --arg pairwhy "$PAIR_WHY" \
             --arg n3 "$(to_status "$N3")" \
             --arg n4 "$(half "$N4_RAW" "$N4")" \
             --arg n4why "$N4_WHY" \
             --arg n5 "$(half "$N5_RAW" "$N5")" \
             --arg n5why "$N5_WHY" \
             '[
-              {"id":"N1","name":"daemonless default scan","detail":"Does a default container scan still exit 0 on a runner with trivy and grype but no container runtime, naming the sub-scanners that could not run?","status":$n1},
-              {"id":"N2","name":"daemonless explicit request","detail":"Does an explicitly requested sub-scanner that cannot run on this host exit non-zero rather than reporting success?","status":$n2},
+              {"id":"N1","name":"daemonless default scan","detail":"Does a default container scan still exit 0 on a runner with trivy and grype but no container runtime, naming the sub-scanners that could not run?","status":$n1,"reason":$pairwhy},
+              {"id":"N2","name":"daemonless explicit request","detail":"Does an explicitly requested sub-scanner that cannot run on this host exit non-zero rather than reporting success?","status":$n2,"reason":$pairwhy},
               {"id":"N3","name":"unscannable image exit code","detail":"Does argus exit 2, distinct from 1, when an image cannot be pulled and nothing could be scanned?","status":$n3},
               {"id":"N4","name":"retry platform is published","detail":"Does a failed pull retry against a platform the manifest publishes rather than hardcoding linux/amd64?","status":$n4,"reason":$n4why},
               {"id":"N5","name":"local image platform pin","detail":"Does a locally-built never-pushed image scan under an explicit platform pin, naming which architecture the findings describe?","status":$n5,"reason":$n5why}

@@ -251,12 +251,11 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
   // levels of the site describe a run the same way.
   var LINE = {
     open:      'reports success without scanning',
-    degraded:  'a scan ran with fewer sub-scanners than were asked for',
     closed:    'argus refuses to run where it should work',
     auxiliary: 'an auxiliary path is broken; scans and gates still work',
     none:      'every defined test that ran, passed'
   };
-  var TONE = { open: 'bad', degraded: 'bad', closed: 'bad', auxiliary: 'warn', none: 'good' };
+  var TONE = { open: 'bad', closed: 'bad', auxiliary: 'warn', none: 'good' };
 
   function fig(n, label, cls) {
     return '<div class="bs"><div class="n ' + (cls || '') + '">' + n +

@@ -99,7 +99,8 @@ h1 { font-size:1.15rem; font-weight:700; text-transform:uppercase; letter-spacin
 
 .meta { font-size:0.76rem; color:var(--fg3); margin-bottom:26px; }
 .meta .sep { margin:0 8px; opacity:0.5; }
-.lede { font-size:0.9rem; color:var(--fg2); max-width:74ch; margin:0 0 10px; }
+.lede { margin:0; }
+.whatis { font-size:0.76rem; color:var(--fg3); max-width:78ch; margin:0 0 12px; line-height:1.5; }
 h2 { font-size:0.82rem; font-weight:700; text-transform:uppercase; letter-spacing:var(--track);
      color:var(--fg); margin:40px 0 6px; padding-top:18px; border-top:1px solid var(--border); }
 h3 { font-size:0.74rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em;
@@ -179,6 +180,11 @@ td.k { color:var(--fg); font-weight:600; white-space:nowrap; }
 .dupe .ids { font-weight:700; color:var(--fg); }
 .dupe .why { color:var(--fg3); font-size:0.74rem; margin-top:3px; }
 .ok { color:var(--pass-ink); }
+.calc h3 { margin:18px 0 6px; }
+.calc p { font-size:0.79rem; max-width:76ch; margin:0 0 8px; }
+.calc p.eg { border-left:2px solid var(--border); padding-left:12px; color:var(--fg3); }
+.eq { color:var(--fg); font-weight:600; }
+.mismatch { color:var(--warn-ink); cursor:help; }
 .refs { margin-top:10px; }
 .ref { display:flex; gap:10px; font-size:0.73rem; color:var(--fg3); padding:7px 0; border-bottom:1px solid var(--rule); }
 .ref .n { font-weight:700; color:var(--fg2); flex:0 0 auto; }
@@ -260,8 +266,11 @@ __NAV_JS__
   });
   var SRV = (PAGE.runUrl || 'https://github.com').split('/').slice(0, 3).join('/');
 
-  $('lede').innerHTML =
-    'Reported, never gated. Every figure is followed by the lines behind it.';
+  // No standing lede. "Reported, never gated" said the same thing on every
+  // visit and explained none of the numbers under it; what a reader needs at
+  // each figure is what THAT figure measures, so the description moved to the
+  // figures themselves.
+  $('lede').innerHTML = '';
 
   var html = '';
 
@@ -269,6 +278,19 @@ __NAV_JS__
   // neutral dash would make "we did not look" and "there is nothing there"
   // indistinguishable -- the exact equivalence this suite rejects everywhere
   // else, so it is not granted here either.
+  // What each number actually measures, said where the number is.
+  var WHAT = {
+    duplication: 'Share of lines that appear more than once, counting only blocks of at ' +
+                 'least 5 lines and 50 tokens. Each group below opens to both copies.',
+    cognitive:   'How hard the hardest single unit is to follow: one point for each break ' +
+                 'in linear reading, plus the nesting depth it sits at. The arithmetic for ' +
+                 'each unit is shown beside it.',
+    tuples:      'Matrix rows that describe the same test once the id and display name are ' +
+                 'removed \u2014 one test billed twice, which also inflates the denominator ' +
+                 'of the pass rate on the results page.'
+  };
+  function says(k) { return '<div class="whatis">' + WHAT[k] + '</div>'; }
+
   function fault(what, why) {
     return '<div class="fault"><span class="flabel">Not measured</span> ' +
            esc(what) + ' &mdash; ' + esc(why) +
@@ -289,6 +311,7 @@ __NAV_JS__
               '%</span><span class="flab">duplicated &middot; ' + esc(d.clones) +
               ' clone groups &middot; ' + esc(d.duplicated_lines) + ' of ' +
               esc(d.total_lines) + ' lines</span></div>';
+      html += says('duplication');
       var g = d.groups || [];
       if (g.length) {
         // Each group expands to the duplicated text. jscpd already produces
@@ -350,18 +373,39 @@ __NAV_JS__
               '</span><span class="flab">worst unit &middot; ' + esc(c.over_threshold) +
               ' of ' + esc(c.units) + ' over ' + esc(c.threshold) +
               ' &middot; ' + esc(c.language) + '</span></div>';
+      html += says('cognitive');
       var top = c.top || [];
       if (top.length) {
         html += '<table><thead><tr><th>Score</th><th>Unit</th>' +
                 '<th>What it counted</th></tr></thead><tbody>' +
           top.map(function (u) {
-            var why = u.why
-              ? Object.keys(u.why).map(function (k) { return k + ' \u00d7' + u.why[k]; }).join(', ')
-              : '';
+            // The arithmetic, not a label. "102" with an empty explanation is
+            // a number nobody can check or act on, which is what the argus
+            // column showed before the Python pass recorded a breakdown.
+            var why = '', sum = null;
+            if (u.why) {
+              var parts = [];
+              Object.keys(u.why).forEach(function (k) {
+                if (k === '= explained') { sum = u.why[k]; return; }
+                parts.push(esc(k) + '&nbsp;+' + u.why[k]);
+              });
+              why = parts.join(' &nbsp;');
+              var shown = sum === null ? u.score : sum;
+              why += ' &nbsp;<span class="eq">= ' + esc(shown) + '</span>';
+              // The Python breakdown explains the reference implementation's
+              // score rather than deriving it. Say so when they diverge
+              // instead of showing a total that does not reconcile.
+              if (sum !== null && sum !== u.score) {
+                why += ' <span class="mismatch" title="The breakdown walks the same constructs ' +
+                       'Campbell\u2019s rules increment on; the score is the reference ' +
+                       'implementation\u2019s. A gap means the two disagree on this unit.">' +
+                       '(score ' + esc(u.score) + ')</span>';
+              }
+            }
             return '<tr' + (u.score > c.threshold ? ' class="over"' : '') + '>' +
                    '<td class="num">' + esc(u.score) + '</td>' +
                    '<td>' + loc(key, u.file, u.line) + ' <span class="unit">' + esc(u.name) + '</span></td>' +
-                   '<td class="why">' + esc(why) + '</td></tr>';
+                   '<td class="why">' + why + '</td></tr>';
           }).join('') + '</tbody></table>';
       }
     }
@@ -374,6 +418,7 @@ __NAV_JS__
               '</span><span class="flab">unexplained duplicate tuples &middot; ' +
               esc(td.rows) + ' matrix rows &middot; ' +
               esc((td.exempted || []).length) + ' annotated deliberate</span></div>';
+      html += says('tuples');
       var rows = (td.exact || []).concat(td.invocation || []);
       if (rows.length) {
         html += '<table><thead><tr><th>Tests</th><th>Defined at</th></tr></thead><tbody>' +
@@ -408,6 +453,46 @@ __NAV_JS__
       'this way by hand; a redundant test also inflates the denominator of the pass ' +
       'rate.</td></tr>' +
     '</tbody></table>';
+
+  // Every figure above should be reproducible by hand from the evidence beside
+  // it. Without the rule, a score is a number from a machine.
+  html += '<h2>How these are calculated</h2>' +
+    '<div class="calc">' +
+      '<h3>Cognitive complexity</h3>' +
+      '<p>One point for each break in linear reading, <em>plus the nesting depth it sits at</em>. ' +
+      'Counted: <span class="mono">if</span>, <span class="mono">elif</span>/<span class="mono">else</span>, ' +
+      '<span class="mono">for</span>, <span class="mono">while</span>, <span class="mono">case</span> and each ' +
+      'case arm, <span class="mono">except</span>, a ternary, <span class="mono">break</span>/' +
+      '<span class="mono">continue</span>, and each boolean sequence (<span class="mono">&amp;&amp;</span>/' +
+      '<span class="mono">||</span>, <span class="mono">and</span>/<span class="mono">or</span>) &mdash; once per ' +
+      'sequence, not per operator. <span class="mono">else</span> costs 1 flat with no nesting surcharge, ' +
+      'because the reader is already inside the construct.</p>' +
+      '<p class="eg">A block with <span class="mono">for +1</span>, <span class="mono">if +3</span>, ' +
+      '<span class="mono">while +2</span>, <span class="mono">&amp;&amp;/|| +3</span>, ' +
+      '<span class="mono">else +1</span> and <span class="mono">nesting +7</span> scores ' +
+      '<strong>17</strong>. The nesting term is the sum of the depths at which the nested ' +
+      'constructs opened, which is why deep code costs more than wide code.</p>' +
+      '<p>Python units are scored by the reference implementation and the breakdown explains it; ' +
+      'shell and Actions <span class="mono">run:</span> blocks apply the same rules directly, with ' +
+      'heredoc bodies excluded because bash does not branch on them. Threshold 15 is ' +
+      'SonarSource\u2019s default \u2014 a convention, not a finding.</p>' +
+
+      '<h3>Duplicated lines</h3>' +
+      '<p><span class="mono">duplicated lines &divide; total lines &times; 100</span>, over clone groups ' +
+      'of at least <strong>5 lines and 50 tokens</strong>. Type-1 (identical) and Type-2 (identical but ' +
+      'for names and literals) only &mdash; restructured duplication that says the same thing differently ' +
+      'is invisible to it, so a low figure is weaker evidence than a high one. Every group above ' +
+      'opens to both copies with matching lines in green.</p>' +
+
+      '<h3>Duplicate test tuples</h3>' +
+      '<p>Each matrix row is reduced to a signature: its parameters with <span class="mono">id</span> ' +
+      'and <span class="mono">name</span> removed. <strong>Exact</strong> means every remaining ' +
+      'parameter matches. <strong>Same invocation</strong> means they match once the container name is ' +
+      'also removed &mdash; the same argus call under a different label, which is legitimate when a ' +
+      'follow-on job asserts something extra. Those are annotated in the workflow with ' +
+      '<span class="mono">// dry:allow &lt;reason&gt;</span> and counted separately rather than ' +
+      'tuned away.</p>' +
+    '</div>';
 
   html += '<h2>References</h2><div class="refs">' +
     // Only what the page cites, and the citation IS the link. Printing the

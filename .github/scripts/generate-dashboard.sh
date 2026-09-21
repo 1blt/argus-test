@@ -91,7 +91,7 @@ fi
 # failing tests, with the file's default applied to anything unclassified.
 RISK=$(jq -n -c --argjson all "$ALL_JSON" --argjson fc "${CLASSES_JSON:-null}" '
   ($fc // {}) as $f
-  | (($f.weights) // {open:10, degraded:6, closed:3, auxiliary:1}) as $w
+  | (($f.weights) // {open:10, closed:3, auxiliary:1}) as $w
   | (($f.default) // "closed") as $dflt
   | (($f.classes) // {} | to_entries | map(.value[] as $id | {key:$id, value:.key}) | from_entries) as $cls
   | [ $all[] | select(.status == "FAIL") | ($cls[.id] // $dflt) | ($w[.] // 0) ] | add // 0')
@@ -276,7 +276,7 @@ DEFINED=$(echo "$CATALOG_JSON" | jq 'length')
 PCT_DEFINED=$(( DEFINED > 0 ? PASSED * 100 / DEFINED : 0 ))
 WORST=$(jq -n -r --argjson all "$ALL_JSON" --argjson fc "${CLASSES_JSON:-null}" '
   ($fc // {}) as $f
-  | (($f.weights) // {open:10, degraded:6, closed:3, auxiliary:1}) as $w
+  | (($f.weights) // {open:10, closed:3, auxiliary:1}) as $w
   | (($f.default) // "closed") as $dflt
   | (($f.classes) // {} | to_entries | map(.value[] as $id | {key:$id, value:.key}) | from_entries) as $cls
   | [$all[] | select(.status == "FAIL") | ($cls[.id] // $dflt)] as $fc2
@@ -517,7 +517,7 @@ table.weights td.ww, table.weights td.wn, table.weights td.wt {
    same figure rather than two numbers that happen to match. */
 table.weights tr.live td.wt { font-weight: 700; }
 table.weights tr.fc-open td.wt, table.weights tr.fc-closed td.wt { color: var(--fail-ink); }
-table.weights tr.fc-degraded td.wt { color: var(--warn-ink); }
+table.weights tr.fc-auxiliary td.wt { color: var(--warn-ink); }
 table.weights tr.total td.wt.v-bad { color: var(--fail-ink); }
 table.weights tr.total td.wt.v-warn { color: var(--warn-ink); }
 table.weights tr.total td.wt.v-good { color: var(--pass-ink); }
@@ -566,10 +566,10 @@ a.fn-n:hover { border-bottom: 1px solid var(--fg); }
    "how bad". Tinting by class made colour do both jobs and understated a
    blocks-the-run failure, which still breaks the consumer's pipeline. */
 tr.fc-open .fctag, tr.fc-closed .fctag { color: var(--fail-ink); }
-tr.fc-degraded .fctag { color: var(--warn-ink); }
+tr.fc-auxiliary .fctag { color: var(--warn-ink); }
 .cc { font-weight: 700; }
 .cc-open, .cc-closed { color: var(--fail-ink); }
-.cc-degraded { color: var(--warn-ink); }
+.cc-auxiliary { color: var(--warn-ink); }
 .dot-sep { color: var(--border); margin: 0 8px; font-weight: 400; }
 .classline {
   margin-top: 8px; font-size: 0.72rem; text-transform: uppercase;
@@ -748,8 +748,8 @@ td.c-lnk a { margin-left: 10px; border-bottom: 0; color: var(--fg3); }
 td.c-lnk a:hover { color: var(--fg); border-bottom: 1px solid var(--fg); }
 tr.t.fc-open td, tr.t.fc-closed td { background: var(--fail-bg); }
 tr.t.fc-open td.c-st, tr.t.fc-closed td.c-st { box-shadow: inset 3px 0 0 var(--fail); }
-tr.t.fc-degraded td { background: var(--warn-bg); }
-tr.t.fc-degraded td.c-st { box-shadow: inset 3px 0 0 var(--warn); }
+tr.t.fc-auxiliary td { background: var(--warn-bg); }
+tr.t.fc-auxiliary td.c-st { box-shadow: inset 3px 0 0 var(--warn); }
 tr.hidden { display: none; }
 mark { background: rgba(240,173,78,0.28); color: inherit; padding: 0 2px; }
 .empty { padding: 44px 12px; text-align: center; color: var(--fg3); font-size: 0.85rem; }
@@ -1018,7 +1018,7 @@ __NAV_JS__
   // Weights come from .github/data/failure-classes.json and rank a control that
   // fails OPEN above one that fails CLOSED, because only the first lies to you.
   const FC = d.failureClasses || null;
-  const W = (FC && FC.weights) || { open: 10, degraded: 6, closed: 3, auxiliary: 1 };
+  const W = (FC && FC.weights) || { open: 10, closed: 3, auxiliary: 1 };
   const CLASS_OF = {};
   if (FC && FC.classes) {
     Object.keys(FC.classes).forEach(function (k) {
@@ -1045,8 +1045,9 @@ __NAV_JS__
   // and the board reported PASS with tests failing -- the exact silent pass
   // this suite exists to catch, in the thing that reports it.
   const ORDER = Object.keys(W).sort(function (a, b) { return (W[b] || 0) - (W[a] || 0); });
-  const LBL = (FC && FC.labels) || { open: 'fail-open', closed: 'fail-closed',
-                                     degraded: 'degraded scan', auxiliary: 'auxiliary breakage' };
+  const LBL = (FC && FC.labels) || { open: 'reports success anyway',
+                                     closed: 'refuses to run',
+                                     auxiliary: 'reporting broke' };
   const SHORT = (FC && FC.short) || LBL;
   const GLOSS = (FC && FC.glossary) || {};
   const REFS = (FC && FC.references) || [];
@@ -1054,7 +1055,6 @@ __NAV_JS__
   const STATUS = (FC && FC.status) || {
     open: { word: 'FAIL', tone: 'bad', line: 'tests report success without scanning' },
     closed: { word: 'FAIL', tone: 'bad', line: 'argus refuses to run where it should work' },
-    degraded: { word: 'FAIL', tone: 'bad', line: 'a scan ran with fewer sub-scanners than were asked for' },
     auxiliary: { word: 'FAIL', tone: 'warn', line: 'an auxiliary path is broken; scans and gates still work' },
     none: { word: 'PASS', tone: 'good', line: 'every defined test that ran, passed' }
   };
@@ -1597,7 +1597,6 @@ __NAV_JS__
     },
     'fail-open': function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'open'; },
     'fail-closed': function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'closed'; },
-    degraded: function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'degraded'; },
     auxiliary: function (x) { return x.kind === 'test' && x.status === 'FAIL' && failClass(x) === 'auxiliary'; },
     tests: function (x) { return x.kind === 'test'; },
     gap: function (x) { return x.kind === 'gap'; },

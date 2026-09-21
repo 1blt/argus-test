@@ -3,74 +3,64 @@
     "What a FAILURE of each test costs a consumer. A passing test contributes",
     "nothing; only failures score.",
     "",
+    "WHAT IS CITED AND WHAT IS NOT. Be clear about this, because the two get",
+    "read as one thing:",
+    "",
+    "  CITED -- that a control which fails permissively is worse than one that",
+    "  fails restrictively. Saltzer & Schroeder's fail-safe defaults [1] and",
+    "  CWE-636 [2] are about exactly that, and they are why 'open' ranks above",
+    "  'closed'. NIST SP 800-53A [3] is why each test is pass/fail rather than",
+    "  scored: a control is satisfied or it is not.",
+    "",
+    "  NOT CITED -- the weights 10 / 3 / 1, and the third class. No source says",
+    "  a silent pass is worth ten of a broken upload. They are a local judgement",
+    "  about this suite, chosen so the ordering survives arithmetic, and they",
+    "  should be argued with here rather than defended as literature.",
+    "",
+    "A FOURTH CLASS WAS REMOVED. 'degraded' was added for argus's",
+    "ContainerScanResult.degraded -- a scan that ran with fewer sub-scanners than",
+    "were asked for. It had no members, no citation, a weight invented to sit",
+    "between two other invented weights, and a name a reader could not tell apart",
+    "from 'auxiliary'. Presenting it beside two genuinely-cited ideas implied a",
+    "taxonomy that does not exist. If a test is ever written whose failure means",
+    "'the scan silently covered less than was asked for', the honest home for it",
+    "is 'open': the defining feature is that nobody is told.",
+    "",
     "Labels are deliberately plain rather than 'fail-open'/'fail-closed'. That",
     "vocabulary inverts across domains -- in physical security a fail-SAFE door",
     "unlocks on power loss while a fail-SECURE one locks -- so a reader from a",
-    "safety-engineering background can read the jargon backwards. 'Reports",
-    "success anyway' cannot be misread.",
-    "",
-    "The ordering is the defensible part: a control that finishes green without",
-    "doing the work is worse than one that refuses to run, because only the",
-    "first creates false assurance (Saltzer & Schroeder 1975, 'fail-safe",
-    "defaults'; CWE-636). The weights are chosen, not derived -- argue with them",
-    "here rather than in the rendering code.",
+    "safety-engineering background can read the jargon backwards.",
     "",
     "Default is 'closed': a test that goes red without a declared class is",
-    "assumed to be argus breaking loudly, not argus lying.",
-    "",
-    "ON THE WORD 'DEGRADED'. This file used to spend 'degraded' on 'something",
-    "alongside the scan broke, such as uploading a report'. argus PR #427",
-    "introduces ContainerScanResult.degraded for a different fact: a default",
-    "sub-scanner could not run, so the scan is THINNER than it looks. Two facts",
-    "cannot share one word on a board that reports both, so the local meaning was",
-    "renamed to 'auxiliary' and 'degraded' now tracks upstream.",
-    "",
-    "They are not worth the same. An auxiliary breakage -- a SARIF upload that",
-    "failed -- leaves the scan and the gate intact, so it stays at weight 1. A",
-    "degraded scan is reduced assurance: the gate held, but over less than the",
-    "caller believes, and the difference is invisible unless the missing",
-    "sub-scanners are named. It sits at 6: above a loud refusal to run (3),",
-    "because a refusal tells you plainly that you have no result, and below a",
-    "silent pass (10), because a degraded scan at least did some of the work and",
-    "is supposed to say so."
+    "assumed to be argus breaking loudly, not argus lying."
   ],
   "_status_note": [
     "The word is the TEST OUTCOME, not a verdict on argus. A dashboard that",
     "labels a product 'unsafe' on the strength of assertions its maintainers",
     "have not agreed to is overstepping. The severity lives in the risk number,",
     "the class counts and the sentence, all of which describe what was observed",
-    "rather than what to conclude.",
-    "",
-    "E5 and E9 used to be called out here as known-open findings -- argus",
-    "reporting success having scanned nothing. argus PR #427 closes both with a",
-    "validate-inputs job, and that job is pure bash in container-scan.yml itself,",
-    "so it is live on a branch run rather than waiting on an SDK release. The",
-    "call-out is gone: if they go red now it is a regression, not a known state."
+    "rather than what to conclude."
   ],
   "default": "closed",
   "weights": {
     "open": 10,
-    "degraded": 6,
     "closed": 3,
     "auxiliary": 1
   },
   "labels": {
-    "open": "fail-open",
-    "degraded": "degraded scan",
-    "closed": "fail-closed",
-    "auxiliary": "auxiliary breakage"
+    "open": "reports success anyway",
+    "closed": "refuses to run",
+    "auxiliary": "reporting broke"
   },
   "short": {
-    "open": "fail-open",
-    "degraded": "scanned less than asked",
-    "closed": "fail-closed",
+    "open": "reports success anyway",
+    "closed": "refuses to run",
     "auxiliary": "reporting broke"
   },
   "glossary": {
     "open": "argus reported success without actually running the check. Nothing warns you, so unscanned code can ship looking approved.",
-    "degraded": "argus scanned, but with fewer sub-scanners than were asked for. The gate held over LESS than it appears to: a green tick that covers part of what the caller requested. Distinct from a broken upload, where the scan itself ran in full.",
     "closed": "argus stopped or errored when it should have worked. Your pipeline blocks, which is disruptive, but nothing slips past unnoticed.",
-    "auxiliary": "Everything about the scan worked -- every requested sub-scanner ran and the gate decided correctly -- but something AROUND it broke, such as uploading the SARIF report. Security coverage is unchanged; a reporting path is not."
+    "auxiliary": "Every requested scanner ran and the gate decided correctly, but something around the scan broke -- uploading the report, for instance. Security coverage is unchanged."
   },
   "status": {
     "open": {
@@ -82,11 +72,6 @@
       "word": "FAIL",
       "tone": "bad",
       "line": "argus refuses to run where it should work"
-    },
-    "degraded": {
-      "word": "FAIL",
-      "tone": "bad",
-      "line": "a scan ran with fewer sub-scanners than were asked for"
     },
     "none": {
       "word": "PASS",
@@ -106,9 +91,8 @@
   },
   "descriptions": {
     "open": "argus reported success without actually running the check. Nothing warns you, so unscanned code can ship looking approved.",
-    "degraded": "argus scanned, but with fewer sub-scanners than were asked for. The gate held over LESS than it appears to: a green tick that covers part of what the caller requested. Distinct from a broken upload, where the scan itself ran in full.",
     "closed": "argus stopped or errored when it should have worked. Your pipeline blocks, which is disruptive, but nothing slips past unnoticed.",
-    "auxiliary": "Everything about the scan worked -- every requested sub-scanner ran and the gate decided correctly -- but something AROUND it broke, such as uploading the SARIF report. Security coverage is unchanged; a reporting path is not."
+    "auxiliary": "Every requested scanner ran and the gate decided correctly, but something around the scan broke -- uploading the report, for instance. Security coverage is unchanged."
   },
   "classes": {
     "open": [
@@ -130,7 +114,6 @@
       "S18",
       "W4"
     ],
-    "degraded": [],
     "auxiliary": [
       "E11",
       "E14",
@@ -173,25 +156,5 @@
     "E5 and E9 are the same class observed directly: a scan naming no",
     "recognised scanner, and a remote scan with an empty image_ref, both report",
     "success having scanned nothing."
-  ],
-  "_why_degraded": [
-    "E11 and E14 are SARIF upload paths: losing them costs visibility in the",
-    "Security tab, not the scan itself. S16 is dry-run issue payloads, S25 the",
-    "optional AI fallback, U4 the SCN detector's own unit tests -- all real, none",
-    "of them a control a consumer is relying on at scan time."
-  ],
-  "_class_note": [
-    "A class says what a FAILURE of that test would cost a consumer -- not what",
-    "the test is about. N1 and N5 concern degraded scanning, but a failure of",
-    "either means argus refused to finish a scan it should have finished, which",
-    "is fail-closed. They were filed under 'degraded' on the strength of their",
-    "subject matter, which put a class on the board that no failing test could",
-    "honestly produce.",
-    "",
-    "'degraded' is kept, and empty. It belongs to a test whose failure means the",
-    "scan silently covered less than the caller asked for. N2 asserts the loud",
-    "half of that contract; the quiet half -- a run that drops a sub-scanner and",
-    "still reports success -- is not asserted anywhere yet, and is CAND-5 and",
-    "CAND-7 on the audit list."
   ]
 }
