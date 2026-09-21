@@ -14,8 +14,8 @@
 # was tested and it is only half true for a branch.
 #
 # Deliberately thin. Every number here is restated from a child page and links
-# to it; the hub computes nothing of its own except the grade, which has to
-# match the dashboard's rule exactly or the two pages disagree in public.
+# to it; the hub computes nothing of its own. Figures come from history.json,
+# which the dashboard writes, so the two cannot disagree in public.
 #
 # Env:
 #   OUT_DIR       <branch> directory (index.html is written into it)

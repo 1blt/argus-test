@@ -98,6 +98,7 @@ except Exception:
 
 THRESHOLD = 15
 units = []
+root = pathlib.Path(sys.argv[1]).parent   # the checkout root, not the package
 for f in pathlib.Path(sys.argv[1]).rglob("*.py"):
     if "/tests/" in str(f) or "__pycache__" in str(f):
         continue
@@ -111,7 +112,8 @@ for f in pathlib.Path(sys.argv[1]).rglob("*.py"):
                 c = get_cognitive_complexity(node)
             except Exception:
                 continue
-            units.append({"file": str(f).split("/", 1)[-1], "name": node.name,
+            # relative to the checkout root, so the page can build a blob URL
+            units.append({"file": str(f.relative_to(root)), "name": node.name,
                           "line": node.lineno, "score": c})
 units.sort(key=lambda u: -u["score"])
 print(json.dumps({

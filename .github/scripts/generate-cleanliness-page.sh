@@ -164,6 +164,10 @@ HTMLEOF
   echo "  branch: \"${BRANCH:-}\","
   echo "  argusRef: \"${ARGUS_REF:-}\","
   echo "  argusRepo: \"${ARGUS_REPO:-}\","
+  echo "  argusSha: \"${ARGUS_SHA:-}\","
+  echo "  argusVersion: \"${ARGUS_VERSION:-}\","
+  echo "  selfRepo: \"${SELF_REPO:-}\","
+  echo "  selfSha: \"${SELF_SHA:-}\","
   echo "  runUrl: \"${RUN_URL:-}\""
   echo "};"
 } >> "$OUT_DIR/index.html"
@@ -176,15 +180,52 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function loc(f, a, b) {
-    return '<span class="mono">' + esc(f) + '</span>:' + esc(a) + (b && b !== a ? '\u2013' + esc(b) : '');
+  // A line reference nobody can open is not evidence. Each target links into
+  // its own repo at the exact commit it was measured at, so the range still
+  // shows the code that produced the number however far the branch moves on.
+  function srcBase(target) {
+    if (target === 'argus') {
+      return (PAGE.argusRepo && PAGE.argusSha && PAGE.argusSha !== 'unknown')
+        ? SRV + '/' + PAGE.argusRepo + '/blob/' + PAGE.argusSha + '/' : null;
+    }
+    return (PAGE.selfRepo && PAGE.selfSha && PAGE.selfSha !== 'unknown')
+      ? SRV + '/' + PAGE.selfRepo + '/blob/' + PAGE.selfSha + '/' : null;
+  }
+  function loc(target, f, a, b) {
+    var text = '<span class="mono">' + esc(f) + '</span>:' + esc(a) +
+               (b && b !== a ? '\u2013' + esc(b) : '');
+    var base = srcBase(target);
+    if (!base) return text;
+    var frag = '#L' + a + (b && b !== a ? '-L' + b : '');
+    return '<a href="' + base + esc(f) + frag + '">' + text + '</a>';
   }
 
+  // Branch, version, commit and time -- for BOTH repositories, because this
+  // page measures two of them and a single commit would not say which. Same
+  // rule as the board: the label is human, the href is immutable, and the SHA
+  // is visible text rather than a tooltip.
+  var SRV = (PAGE.runUrl || 'https://github.com').split('/').slice(0, 3).join('/');
+  function sha(repo, full, label) {
+    if (!full || full === 'unknown') return '';
+    return ' <a class="mono" href="' + SRV + '/' + repo + '/commit/' + esc(full) +
+           '" title="exact commit -- this link cannot move">' +
+           esc(String(full).slice(0, 7)) + '</a>';
+  }
   var m = [];
-  if (PAGE.branch)   m.push('branch <span class="mono">' + esc(PAGE.branch) + '</span>');
-  if (PAGE.argusRef) m.push('argus <span class="mono">' + esc(PAGE.argusRef) + '</span>');
+  if (PAGE.branch) m.push('branch <span class="mono">' + esc(PAGE.branch) + '</span>');
+  if (PAGE.selfRepo) {
+    m.push('suite' + (sha(PAGE.selfRepo, PAGE.selfSha) || ' <span class="mono">(sha unknown)</span>'));
+  }
+  if (PAGE.argusRepo) {
+    var onMain = (PAGE.argusRef || 'main') === 'main';
+    m.push((onMain && PAGE.argusVersion
+        ? '<a href="' + SRV + '/' + PAGE.argusRepo + '/releases/tag/' + esc(PAGE.argusVersion) +
+          '">argus <span class="mono">v' + esc(PAGE.argusVersion) + '</span></a>'
+        : 'argus <span class="mono">' + esc(PAGE.argusRef || 'main') + '</span>') +
+      (sha(PAGE.argusRepo, PAGE.argusSha) || ' <span class="mono">(sha unknown)</span>'));
+  }
   m.push(esc(PAGE.date));
-  if (PAGE.runUrl)   m.push('<a href="' + esc(PAGE.runUrl) + '">view run &#8599;</a>');
+  if (PAGE.runUrl) m.push('<a href="' + esc(PAGE.runUrl) + '">view run &#8599;</a>');
   $('meta').innerHTML = m.join('<span class="sep">&middot;</span>');
 
   $('lede').innerHTML =
@@ -222,8 +263,8 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
                 '<th>Is repeated at</th></tr></thead><tbody>' +
           g.slice(0, 12).map(function (x) {
             return '<tr><td>' + esc(x.lines) + '</td><td>' + esc(x.tokens) + '</td>' +
-                   '<td>' + loc(x.a.file, x.a.start, x.a.end) + '</td>' +
-                   '<td>' + loc(x.b.file, x.b.start, x.b.end) + '</td></tr>';
+                   '<td>' + loc(key, x.a.file, x.a.start, x.a.end) + '</td>' +
+                   '<td>' + loc(key, x.b.file, x.b.start, x.b.end) + '</td></tr>';
           }).join('') + '</tbody></table>' +
           (g.length > 12 ? '<div class="more">' + (g.length - 12) + ' further group(s) not shown.</div>' : '');
       } else {
@@ -250,7 +291,7 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
               : '';
             return '<tr' + (u.score > c.threshold ? ' class="over"' : '') + '>' +
                    '<td class="num">' + esc(u.score) + '</td>' +
-                   '<td>' + loc(u.file, u.line) + ' <span class="unit">' + esc(u.name) + '</span></td>' +
+                   '<td>' + loc(key, u.file, u.line) + ' <span class="unit">' + esc(u.name) + '</span></td>' +
                    '<td class="why">' + esc(why) + '</td></tr>';
           }).join('') + '</tbody></table>';
       }
@@ -268,8 +309,11 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
       if (rows.length) {
         html += '<table><thead><tr><th>Tests</th><th>Defined at</th></tr></thead><tbody>' +
           rows.map(function (x) {
-            return '<tr><td>' + esc(x.tests.join(' = ')) + '</td><td class="mono">' +
-                   esc((x.where || []).join('  ')) + '</td></tr>';
+            return '<tr><td>' + esc(x.tests.join(' = ')) + '</td><td>' +
+                   (x.where || []).map(function (w) {
+                     var pp = String(w).split(':');
+                     return loc('suite', '.github/workflows/' + pp[0], pp[1]);
+                   }).join(' &nbsp; ') + '</td></tr>';
           }).join('') + '</tbody></table>';
       }
       if ((td.exempted || []).length) {
