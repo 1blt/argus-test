@@ -180,7 +180,15 @@ td.k { color:var(--fg); font-weight:600; white-space:nowrap; }
 .dupe .ids { font-weight:700; color:var(--fg); }
 .dupe .why { color:var(--fg3); font-size:0.74rem; margin-top:3px; }
 .ok { color:var(--pass-ink); }
-.calc h3 { margin:18px 0 6px; }
+.calc h3 { margin:22px 0 8px; }
+.eqn { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.86rem;
+       color:var(--fg); background:var(--surface2); border:1px solid var(--border);
+       padding:14px 18px; margin:0 0 10px; line-height:2.1; overflow-x:auto; }
+.eqn .sum { font-size:1.25rem; vertical-align:-0.15em; }
+.eqn .cond { display:block; font-size:0.74rem; color:var(--fg3); line-height:1.5; margin-top:6px; }
+.eqn .frac { display:inline-block; text-align:center; vertical-align:middle; margin:0 4px; }
+.eqn .frac .num { display:block; padding:0 6px 2px; }
+.eqn .frac .den { display:block; padding:2px 6px 0; border-top:1px solid var(--fg2); }
 .calc p { font-size:0.79rem; max-width:76ch; margin:0 0 8px; }
 .calc p.eg { border-left:2px solid var(--border); padding-left:12px; color:var(--fg3); }
 .eq { color:var(--fg); font-weight:600; }
@@ -456,42 +464,55 @@ __NAV_JS__
 
   // Every figure above should be reproducible by hand from the evidence beside
   // it. Without the rule, a score is a number from a machine.
+  // Each figure as the equation that produces it, then two sentences on what
+  // the equation is doing. A formula a reader can apply by hand to the
+  // evidence above it is the difference between a measurement and a number
+  // from a machine.
   html += '<h2>How these are calculated</h2>' +
     '<div class="calc">' +
+
       '<h3>Cognitive complexity</h3>' +
-      '<p>One point for each break in linear reading, <em>plus the nesting depth it sits at</em>. ' +
-      'Counted: <span class="mono">if</span>, <span class="mono">elif</span>/<span class="mono">else</span>, ' +
-      '<span class="mono">for</span>, <span class="mono">while</span>, <span class="mono">case</span> and each ' +
-      'case arm, <span class="mono">except</span>, a ternary, <span class="mono">break</span>/' +
-      '<span class="mono">continue</span>, and each boolean sequence (<span class="mono">&amp;&amp;</span>/' +
-      '<span class="mono">||</span>, <span class="mono">and</span>/<span class="mono">or</span>) &mdash; once per ' +
-      'sequence, not per operator. <span class="mono">else</span> costs 1 flat with no nesting surcharge, ' +
-      'because the reader is already inside the construct.</p>' +
-      '<p class="eg">A block with <span class="mono">for +1</span>, <span class="mono">if +3</span>, ' +
-      '<span class="mono">while +2</span>, <span class="mono">&amp;&amp;/|| +3</span>, ' +
-      '<span class="mono">else +1</span> and <span class="mono">nesting +7</span> scores ' +
-      '<strong>17</strong>. The nesting term is the sum of the depths at which the nested ' +
-      'constructs opened, which is why deep code costs more than wide code.</p>' +
-      '<p>Python units are scored by the reference implementation and the breakdown explains it; ' +
-      'shell and Actions <span class="mono">run:</span> blocks apply the same rules directly, with ' +
-      'heredoc bodies excluded because bash does not branch on them. Threshold 15 is ' +
-      'SonarSource\u2019s default \u2014 a convention, not a finding.</p>' +
+      '<div class="eqn">score &nbsp;=&nbsp; ' +
+        '<span class="sum">&Sigma;</span><sub>&thinsp;b&thinsp;&isin;&thinsp;breaks</sub>' +
+        '&nbsp;( 1 + depth<sub>b</sub> )</div>' +
+      '<p>A <em>break</em> is anything that interrupts linear reading: ' +
+      '<span class="mono">if</span>, <span class="mono">for</span>, ' +
+      '<span class="mono">while</span>, <span class="mono">case</span> and each arm, ' +
+      '<span class="mono">except</span>, a ternary, <span class="mono">break</span>/' +
+      '<span class="mono">continue</span>, and each boolean sequence &mdash; once per ' +
+      'sequence, not per operator. <span class="mono">depth<sub>b</sub></span> is how many ' +
+      'constructs already enclose it, which is why the same statements cost more nested than ' +
+      'laid out flat.</p>' +
+      '<p><span class="mono">else</span> and <span class="mono">elif</span> are the exception: ' +
+      'they add 1 with no depth term, because the reader is already inside that construct. ' +
+      'Worked: <span class="mono">for&nbsp;+1, if&nbsp;+3, while&nbsp;+2, &amp;&amp;/||&nbsp;+3, ' +
+      'else&nbsp;+1, nesting&nbsp;+7 = 17</span> &mdash; the nesting term alone is 41% of that ' +
+      'score.</p>' +
 
       '<h3>Duplicated lines</h3>' +
-      '<p><span class="mono">duplicated lines &divide; total lines &times; 100</span>, over clone groups ' +
-      'of at least <strong>5 lines and 50 tokens</strong>. Type-1 (identical) and Type-2 (identical but ' +
-      'for names and literals) only &mdash; restructured duplication that says the same thing differently ' +
-      'is invisible to it, so a low figure is weaker evidence than a high one. Every group above ' +
-      'opens to both copies with matching lines in green.</p>' +
+      '<div class="eqn">duplication &nbsp;=&nbsp; ' +
+        '<span class="frac"><span class="num">duplicated lines</span>' +
+        '<span class="den">total lines</span></span> &nbsp;&times;&nbsp; 100' +
+        '<span class="cond">&nbsp;&nbsp;where a clone &ge; 5 lines <em>and</em> &ge; 50 tokens</span></div>' +
+      '<p>Both thresholds must hold, so a repeated three-line stanza is not counted and neither ' +
+      'is a long run of trivial tokens. Only Type-1 (identical) and Type-2 (identical but for ' +
+      'names and literals) clones are detected.</p>' +
+      '<p>That makes a high figure strong evidence and a low one weak: duplication restructured ' +
+      'to say the same thing differently is invisible to the measure. The groups above open to ' +
+      'both copies so the number can be checked against the code.</p>' +
 
       '<h3>Duplicate test tuples</h3>' +
-      '<p>Each matrix row is reduced to a signature: its parameters with <span class="mono">id</span> ' +
-      'and <span class="mono">name</span> removed. <strong>Exact</strong> means every remaining ' +
-      'parameter matches. <strong>Same invocation</strong> means they match once the container name is ' +
-      'also removed &mdash; the same argus call under a different label, which is legitimate when a ' +
-      'follow-on job asserts something extra. Those are annotated in the workflow with ' +
-      '<span class="mono">// dry:allow &lt;reason&gt;</span> and counted separately rather than ' +
-      'tuned away.</p>' +
+      '<div class="eqn">sig(row) &nbsp;=&nbsp; params(row) &nbsp;&minus;&nbsp; { id, name }' +
+        '<br>exact &nbsp;=&nbsp; &Sigma;<sub>&thinsp;g</sub> ( |g| &minus; 1 ) ' +
+        '&nbsp;&nbsp;over groups sharing a sig' +
+        '<span class="cond">&nbsp;&nbsp;invocation: the same, with sig also &minus; { cname }</span></div>' +
+      '<p>Every matrix row reduces to its parameters with the id and display name stripped; rows ' +
+      'sharing a signature form a group, and a group of <em>n</em> contributes <em>n&minus;1</em> ' +
+      'redundant tests. The second form additionally ignores the container name, catching the ' +
+      'same argus call run under a different label.</p>' +
+      '<p>A same-invocation pair can be legitimate when a follow-on job asserts something extra, ' +
+      'so those are annotated in the workflow with <span class="mono">// dry:allow &lt;reason&gt;</span> ' +
+      'and counted separately rather than excluded from the measure.</p>' +
     '</div>';
 
   html += '<h2>References</h2><div class="refs">' +
