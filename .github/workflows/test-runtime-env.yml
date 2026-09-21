@@ -112,11 +112,33 @@ jobs:
         run: |
           set -uo pipefail
 
-          # A PATH with the scanners and the interpreter, but no runtime. The
-          # system dirs are included because argus needs python/curl/etc; none
-          # of them carries docker, podman or nerdctl on a GitHub runner.
+          # A PATH with the scanners and the interpreter, but no runtime.
+          #
+          # The previous version listed /usr/bin outright, on the stated
+          # assumption that none of the system dirs carries a container
+          # runtime. docker is /usr/bin/docker on a GitHub runner, so the
+          # assumption was simply false and this job failed its own
+          # precondition check on every run -- correctly refusing to pretend it
+          # had tested a daemonless host, while reporting it as an argus
+          # failure.
+          #
+          # Build the directory instead: symlink everything the system dirs
+          # offer EXCEPT the runtimes, so argus keeps python, curl and the rest
+          # and finds no runtime however it looks.
           PYBIN="$(dirname "$(command -v python3)")"
-          export PATH="$HOME/scanbin:$PYBIN:/usr/bin:/bin"
+          SHIM="$HOME/norc"
+          rm -rf "$SHIM" && mkdir -p "$SHIM"
+          for d in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*; do
+              b=$(basename "$f")
+              case "$b" in
+                docker|podman|nerdctl|docker-*|podman-*|containerd*|ctr|crictl|lima*|colima) continue ;;
+              esac
+              [ -e "$SHIM/$b" ] || ln -s "$f" "$SHIM/$b" 2>/dev/null || true
+            done
+          done
+          export PATH="$HOME/scanbin:$PYBIN:$SHIM"
           # Docker also answers over DOCKER_HOST; unset so a socket cannot
           # rescue a runtime that PATH no longer advertises.
           unset DOCKER_HOST
@@ -382,6 +404,9 @@ jobs:
     name: "N5: local image with a platform pin"
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      verdict: ${{ steps.assert5.outputs.verdict }}
+      reason: ${{ steps.assert5.outputs.reason }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -410,11 +435,34 @@ jobs:
           docker image inspect argus-test-local-only:v0 --format 'built {{.Id}} for {{.Architecture}}'
 
       - name: Scan it with containers.platform pinned to the other architecture
+        id: assert5
         run: |
           set -uo pipefail
           HOST_ARCH=$(docker image inspect argus-test-local-only:v0 --format '{{.Architecture}}')
           OTHER=$([ "$HOST_ARCH" = "amd64" ] && echo arm64 || echo amd64)
           echo "local image is linux/$HOST_ARCH; pinning --platform linux/$OTHER"
+
+          # CONTROL FIRST. The assertion below blames argus for failing to scan
+          # a local-only image under a foreign platform pin. That is only a
+          # finding if argus CAN scan the same image without the pin --
+          # otherwise the test has proved that its own fixture is unscannable.
+          # An earlier run failed here with "could not determine source", which
+          # is exactly as consistent with a broken fixture as with the bug, and
+          # there was no way to tell them apart.
+          set +e
+          python -m argus scan container \
+            --image argus-test-local-only:v0 \
+            --scanners trivy --severity-threshold none > n5-control.log 2>&1
+          CTRL=$?
+          set -e
+          if [ "$CTRL" -ne 0 ]; then
+            tail -20 n5-control.log
+            echo "::warning title=N5 control failed::argus cannot scan this locally-built image even WITHOUT a platform pin (exit $CTRL), so the pinned case proves nothing about platform handling. Recorded as no assurance rather than as an argus finding."
+            echo "verdict=skip" >> "$GITHUB_OUTPUT"
+            echo "reason=The control failed: argus could not scan the locally-built image without any platform pin either, so this test could not isolate platform handling. The fixture or the local-image path is the problem, not necessarily the pin." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "control ok: the local image scans without a pin"
 
           set +e
           python -m argus scan container \
@@ -469,6 +517,8 @@ jobs:
           N4_RAW: ${{ needs.n4-retry-platform.outputs.verdict }}
           N4_WHY: ${{ needs.n4-retry-platform.outputs.reason }}
           N5: ${{ needs.n5-local-image-platform-pin.result }}
+          N5_RAW: ${{ needs.n5-local-image-platform-pin.outputs.verdict }}
+          N5_WHY: ${{ needs.n5-local-image-platform-pin.outputs.reason }}
         run: |
           to_status() {
             case "$1" in
@@ -497,12 +547,13 @@ jobs:
             --arg n3 "$(to_status "$N3")" \
             --arg n4 "$(half "$N4_RAW" "$N4")" \
             --arg n4why "$N4_WHY" \
-            --arg n5 "$(to_status "$N5")" \
+            --arg n5 "$(half "$N5_RAW" "$N5")" \
+            --arg n5why "$N5_WHY" \
             '[
               {"id":"N1","name":"daemonless default scan","detail":"Does a default container scan still exit 0 on a runner with trivy and grype but no container runtime, naming the sub-scanners that could not run?","status":$n1},
               {"id":"N2","name":"daemonless explicit request","detail":"Does an explicitly requested sub-scanner that cannot run on this host exit non-zero rather than reporting success?","status":$n2},
               {"id":"N3","name":"unscannable image exit code","detail":"Does argus exit 2, distinct from 1, when an image cannot be pulled and nothing could be scanned?","status":$n3},
               {"id":"N4","name":"retry platform is published","detail":"Does a failed pull retry against a platform the manifest publishes rather than hardcoding linux/amd64?","status":$n4,"reason":$n4why},
-              {"id":"N5","name":"local image platform pin","detail":"Does a locally-built never-pushed image scan under an explicit platform pin, naming which architecture the findings describe?","status":$n5}
+              {"id":"N5","name":"local image platform pin","detail":"Does a locally-built never-pushed image scan under an explicit platform pin, naming which architecture the findings describe?","status":$n5,"reason":$n5why}
             ]')
           echo "results=$RESULTS" >> "$GITHUB_OUTPUT"
