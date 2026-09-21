@@ -13,6 +13,15 @@
 # root, the branch hub and the board must not each derive their own headline
 # from the same run and then disagree in public.
 #
+# TWO HIERARCHIES, ONE INDEX. A branch has two pages and they answer different
+# questions, so the toggle switches which one the whole list is about: the same
+# branches, different figures, different destination. Listing every branch
+# twice down one page would grow with the branch count and repeat every name.
+#
+# There is no per-branch hub any more. It restated the figures on these cards
+# and cost a click to reach the page the reader wanted; /<branch>/ redirects to
+# the board instead.
+#
 # NO LETTER GRADE, for the reason the dashboard removed its own: one letter is
 # severity-blind, so a silent pass and a failed artifact upload cost it the
 # same, and 95% reads as "good" over a state that includes a scan reporting
@@ -161,6 +170,13 @@ h1 { font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing
 :root[data-theme="light"] .eye { filter: grayscale(1) brightness(0.72); }
 
 .lede { font-size:0.82rem; color:var(--fg3); margin:0 0 28px; max-width:70ch; }
+.modes { display:inline-flex; border:1px solid var(--border); margin-bottom:18px; }
+.modes button { font-family:inherit; background:none; border:none; cursor:pointer;
+                padding:7px 15px; font-size:0.7rem; font-weight:700; text-transform:uppercase;
+                letter-spacing:0.07em; color:var(--fg3); border-right:1px solid var(--border); }
+.modes button:last-child { border-right:none; }
+.modes button:hover { color:var(--fg); }
+.modes button.on { background:var(--fg); color:var(--bg); }
 .branch { border:1px solid var(--border); background:var(--surface); margin-bottom:12px; }
 .bhead { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
          padding:16px 20px 12px; text-decoration:none; color:inherit; }
@@ -177,9 +193,6 @@ h1 { font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing
 .bs .n.good { color:var(--pass-ink); }
 .bs .l { font-size:0.6rem; text-transform:uppercase; letter-spacing:0.07em; color:var(--fg3); }
 .bline { font-size:0.75rem; color:var(--fg3); padding:0 20px 10px; }
-.bclean { font-size:0.72rem; color:var(--fg3); padding:0 20px 14px; }
-.clabel { font-size:0.6rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em;
-          color:var(--fg3); border:1px solid var(--border); padding:0 5px; margin-right:7px; }
 .blinks { display:flex; gap:0; border-top:1px solid var(--rule); }
 .blinks a { flex:1; text-align:center; padding:10px 12px; font-size:0.68rem; font-weight:700;
             text-transform:uppercase; letter-spacing:0.07em; color:var(--fg3);
@@ -199,6 +212,10 @@ footer { margin-top:34px; padding-top:16px; border-top:1px solid var(--border);
     <a href="https://github.com/huntridge-labs/argus">huntridge-labs/argus</a>,
     published per branch. Each branch keeps its own run history, so results from
     work in progress never overwrite the default branch's.</p>
+  <div class="modes" id="modes">
+    <button type="button" data-mode="tests" class="on">Test results</button>
+    <button type="button" data-mode="cleanliness">Code cleanliness</button>
+  </div>
   <div id="branches"></div>
   <footer id="foot"></footer>
 </div>
@@ -228,85 +245,94 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
   };
   var TONE = { open: 'bad', degraded: 'bad', closed: 'bad', auxiliary: 'warn', none: 'good' };
 
-  var html = BRANCHES.map(function (b) {
+  function fig(n, label, cls) {
+    return '<div class="bs"><div class="n ' + (cls || '') + '">' + n +
+           '</div><div class="l">' + esc(label) + '</div></div>';
+  }
+
+  function card(b, mode) {
     var h = b.latest;
-    var body;
-    if (!h) {
-      body = '<div class="none">Published, but no run history yet &mdash; figures appear ' +
-             'after the next complete run.</div>';
-    } else {
-      var worst = h.worst || (h.verdict === 'PASS' ? 'none' : 'closed');
-      var move = '';
-      if (b.prev && typeof b.prev.risk === 'number') {
-        var d = h.risk - b.prev.risk;
-        move = d === 0 ? ' &middot; no change vs previous run'
-             : ' &middot; ' + (d > 0 ? '▲ +' + d : '▼ ' + d) + ' vs previous run';
-      }
-      var defined = h.defined != null ? h.defined : h.total;
-      var pct = h.pct_defined != null ? h.pct_defined : h.rate;
-      // Two cells, not three. "92% passing" and "82/89 of defined" were the
-      // same fact rendered twice -- the percentage IS the fraction -- so the
-      // count carries the number and the percentage rides in its label.
-      // `scope` is shown only when it is not the usual full run; printing
-      // "scope all" on every card every time is a word, not information.
-      body =
-        '<div class="bstats">' +
-          '<div class="bs"><div class="n ' + (h.risk ? (TONE[worst] || 'bad') : 'good') + '">' +
-            esc(h.risk) + '</div><div class="l">Risk index</div></div>' +
-          '<div class="bs"><div class="n">' + esc(h.passed) +
-            '<span class="of">/' + esc(defined) + '</span></div>' +
-            '<div class="l">Passing (' + esc(pct) + '%)</div></div>' +
-        '</div>' +
-        '<div class="bline">' + esc(LINE[worst] || '') + move +
-          (h.scope && h.scope !== 'all'
-            ? ' &middot; scope <span class="mono">' + esc(h.scope) + '</span>' : '') +
+    var body, link, note = '';
+
+    if (mode === 'cleanliness') {
+      var m = b.metrics;
+      if (!m) {
+        body = '<div class="none">No cleanliness figures published for this branch yet.</div>';
+      } else {
+        body = '<div class="bstats">' +
+          fig(m.dup != null ? Number(m.dup).toFixed(1) + '%' : '&mdash;', 'Duplicated') +
+          fig(m.tuples != null ? m.tuples : '&mdash;', 'Duplicate tuples',
+              (m.tuples ? 'warn' : '')) +
+          fig(m.cog != null ? m.cog : '&mdash;', 'argus cognitive, worst') +
           '</div>';
-    }
-
-    // Cleanliness sits on its own line, labelled and lighter, rather than
-    // joining the figures above. Those are the verdict; these are reported and
-    // gate nothing, and putting them in the same row would read as though a
-    // duplication percentage were part of whether argus works.
-    var cl = '';
-    if (b.metrics) {
-      var m = b.metrics, parts = [];
-      parts.push(m.dup    != null ? Number(m.dup).toFixed(1) + '% duplicated' : 'duplication not measured');
-      if (m.tuples != null) {
-        parts.push(m.tuples + ' duplicate tuple' + (m.tuples === 1 ? '' : 's'));
+        // Stated on every card because it is the thing people forget: none of
+        // these numbers can fail a build.
+        note = '<div class="bline">Reported, never gated.</div>';
       }
-      parts.push(m.cog != null ? 'argus cognitive ' + m.cog : 'argus cognitive not measured');
-      cl = '<div class="bclean"><span class="clabel">Cleanliness</span> ' +
-           esc(parts.join('  \u00b7  ')) + '</div>';
-    } else if (b.hasClean) {
-      cl = '<div class="bclean"><span class="clabel">Cleanliness</span> figures not published for this run</div>';
+      link = b.hasClean
+        ? '<a href="' + esc(b.branch) + '/code-cleanliness/">Open metrics</a>' : '';
+    } else {
+      if (!h) {
+        body = '<div class="none">Published, but no run history yet &mdash; figures appear ' +
+               'after the next complete run.</div>';
+      } else {
+        var worst = h.worst || (h.verdict === 'PASS' ? 'none' : 'closed');
+        var move = '';
+        if (b.prev && typeof b.prev.risk === 'number') {
+          var dlt = h.risk - b.prev.risk;
+          move = dlt === 0 ? ' &middot; no change vs previous run'
+               : ' &middot; ' + (dlt > 0 ? '\u25b2 +' + dlt : '\u25bc ' + dlt) + ' vs previous run';
+        }
+        var defined = h.defined != null ? h.defined : h.total;
+        var pct = h.pct_defined != null ? h.pct_defined : h.rate;
+        body = '<div class="bstats">' +
+          fig(esc(h.risk), 'Risk index', (h.risk ? (TONE[worst] || 'bad') : 'good')) +
+          fig(esc(h.passed) + '<span class="of">/' + esc(defined) + '</span>',
+              'Passing (' + esc(pct) + '%)') +
+          '</div>';
+        note = '<div class="bline">' + esc(LINE[worst] || '') + move +
+               (h.scope && h.scope !== 'all'
+                 ? ' &middot; scope <span class="mono">' + esc(h.scope) + '</span>' : '') +
+               '</div>';
+      }
+      link = b.hasTests ? '<a href="' + esc(b.branch) + '/tests/">Open board</a>' : '';
     }
 
-    // No "Summary" link here. The branch name above is already that link, and
-    // on a page which is itself a summary the label answered "summary of
-    // what?" with a second copy of the thing you were looking at. The row is
-    // for the pages this card does NOT already contain.
-    var links = '';
-    if (b.hasTests) links += '<a href="' + esc(b.branch) + '/tests/">Test results</a>';
-    if (b.hasClean) links += '<a href="' + esc(b.branch) + '/code-cleanliness/">Code cleanliness</a>';
-    if (h && h.url) links += '<a href="' + esc(h.url) + '">Run &#8599;</a>';
+    if (h && h.url) link += '<a href="' + esc(h.url) + '">Run &#8599;</a>';
+    var href = esc(b.branch) + '/' + (mode === 'cleanliness' ? 'code-cleanliness/' : 'tests/');
 
     return '<div class="branch">' +
-             '<a class="bhead" href="' + esc(b.branch) + '/">' +
+             '<a class="bhead" href="' + href + '">' +
                '<span class="bname">' + esc(b.name || b.branch) + '</span>' +
-               // The commit, not a "branch summary ->" label. The branch name
-               // is already the link, so the arrow restated the affordance;
-               // the SHA says WHICH revision of that branch was assessed,
-               // which nothing else on the card did.
                (h && h.self_sha
-                 ? '<span class="bsha mono">' + esc(String(h.self_sha).slice(0, 7)) + '</span>'
-                 : '') +
+                 ? '<span class="bsha mono">' + esc(String(h.self_sha).slice(0, 7)) + '</span>' : '') +
                (h ? '<span class="bwhen">' + esc(h.date) + '</span>' : '') +
-             '</a>' + body + cl +
-             '<div class="blinks">' + links + '</div>' +
+             '</a>' + body + note +
+             (link ? '<div class="blinks">' + link + '</div>' : '') +
            '</div>';
-  }).join('');
+  }
 
-  document.getElementById('branches').innerHTML = html;
+  // The choice is a reading preference, not state anyone else depends on, so
+  // localStorage is right for it -- and every access is guarded, because it
+  // throws in a private window and the page must still render.
+  function paint(mode) {
+    document.getElementById('branches').innerHTML =
+      BRANCHES.map(function (b) { return card(b, mode); }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('.modes button'), function (btn) {
+      btn.className = btn.getAttribute('data-mode') === mode ? 'on' : '';
+    });
+    try { localStorage.setItem('argus-index-mode', mode); } catch (e) {}
+  }
+
+  var start = 'tests';
+  try { start = localStorage.getItem('argus-index-mode') || 'tests'; } catch (e) {}
+  if (start !== 'tests' && start !== 'cleanliness') { start = 'tests'; }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.modes button'), function (btn) {
+    btn.addEventListener('click', function () { paint(btn.getAttribute('data-mode')); });
+  });
+  paint(start);
+
   document.getElementById('foot').innerHTML =
     'Figures are read from each branch’s <span class="mono">history.json</span> rather than ' +
     'recomputed here, so this page cannot disagree with the board it links to. There is no letter ' +

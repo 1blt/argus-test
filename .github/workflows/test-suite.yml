@@ -985,67 +985,25 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/generate-cleanliness-page.sh
 
-      # The hub at the branch root. Generated last so it can restate both child
-      # pages' headlines. The two pages answer different questions -- does
-      # argus behave correctly, and how tidy is the code -- and the hub exists
-      # so neither is read as part of the other's verdict.
-      - name: Generate the branch summary hub
-        env:
-          OUT_DIR: _site/${{ env.branch_dir }}
-          ALL_JSON: ${{ env.ALL_JSON }}
-          CLEAN_FILE: _site/liveness/cleanliness.json
-          LIVENESS_FILE: _site/liveness/ref-liveness.json
-          BRANCH: ${{ env.branch_name }}
-          BRANCH_SLUG: ${{ env.branch_slug }}
-          BRANCHES_JSON: ${{ env.BRANCHES_JSON }}
-          ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
-          ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
-          ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
-          ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash .github/scripts/generate-summary-index.sh
-
-      # Pages replaces the whole site on every deployment, so publishing only
-      # this branch would delete the other one. The other side is a known, small
-      # set of files, so pull it back off the live site and republish both. If it
-      # is not there yet (first run, or that branch has never run), it simply
-      # reappears the next time that branch deploys.
-      # Pages replaces the whole site on every deployment, so a branch that
-      # publishes must carry every other branch's pages with it or it deletes
-      # them. There used to be exactly one "other" branch; now there are as
-      # many as have ever published, so the live site's branches.json is the
-      # list. A branch missing from it simply reappears when it next runs.
-      - name: Preserve every other branch's site
+      # /<branch>/ is a REDIRECT, not a page. It used to serve a hub that
+      # restated the figures already on the index card and cost a click to
+      # reach the page you wanted. The index carries those figures per branch
+      # now, so the middle level was pure repetition. Kept as a redirect rather
+      # than removed so trimming a URL back a level, or an old bookmark, still
+      # lands somewhere useful.
+      - name: Point the branch root at the board
         run: |
-          set -uo pipefail
-          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
-          MINE="${{ env.branch_slug }}"
-          curl -sSf "$SITE/branches.json" -o /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
-          jq empty /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
-          # Older sites predate the manifest; fall back to the two that existed.
-          if [ "$(jq 'length' /tmp/branches.json)" = "0" ]; then
-            echo '[{"slug":"main","name":"main"},{"slug":"dev","name":"dev"}]' > /tmp/branches.json
-          fi
-          KEPT=0
-          for SLUG in $(jq -r '.[].slug' /tmp/branches.json); do
-            [ "$SLUG" = "$MINE" ] && continue
-            mkdir -p "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness"
-            GOT=0
-            for f in index.html history.json cleanliness.json favicon.png \
-                     tests/index.html code-cleanliness/index.html; do
-              curl -sSf "$SITE/$SLUG/$f" -o "_site/$SLUG/$f" 2>/dev/null && GOT=$((GOT + 1))
-            done
-            rmdir "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness" 2>/dev/null || true
-            if [ "$GOT" -eq 0 ]; then
-              rm -rf "_site/$SLUG"
-              echo "  $SLUG: nothing live to preserve"
-            else
-              touch "_site/$SLUG/.nojekyll"
-              KEPT=$((KEPT + 1))
-              echo "  $SLUG: kept $GOT file(s)"
-            fi
-          done
-          echo "Preserved $KEPT other branch(es)"
+          set -euo pipefail
+          D="_site/${{ env.branch_dir }}"
+          mkdir -p "$D"
+          {
+            printf '%s\n' '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+            printf '%s\n' '<meta http-equiv="refresh" content="0; url=tests/">'
+            printf '%s\n' '<link rel="canonical" href="tests/">'
+            printf '%s\n' '<title>Argus Test Suite</title></head>'
+            printf '%s\n' '<body><p>Redirecting to <a href="tests/">test results</a>.</p></body></html>'
+          } > "$D/index.html"
+          echo "Wrote $D/index.html -> tests/"
 
       # cleanliness.json follows its branch into the published site. The root
       # index reads each branch's copy to show that branch's figures, exactly

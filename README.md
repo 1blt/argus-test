@@ -550,50 +550,39 @@ Each branch publishes its own subtree, so `dev` results never overwrite
 
 ```
 argus-test/
-├── index.html                       root: one card per branch, with its figures
+├── index.html                       the index: every branch, with a
+│                                    Tests / Code cleanliness toggle
 ├── branches.json                    manifest; a publishing branch reads it to
 │                                    know which other branches to carry along
 ├── main/
-│   ├── index.html                   summary hub — risk, pass rate, ref, links
+│   ├── index.html                   redirect -> tests/
 │   ├── history.json                 last 20 runs, for the score chart
-│   ├── cleanliness.json             figures the root index reads
+│   ├── cleanliness.json             figures the index reads
 │   ├── favicon.png
-│   ├── tests/
-│   │   └── index.html               the dashboard: every test, searchable
-│   └── code-cleanliness/
-│       └── index.html               KISS/DRY, rationale and citations
-└── dev/
-    └── …                            same shape
+│   ├── tests/index.html             the board: every test, searchable
+│   └── code-cleanliness/index.html  KISS/DRY, evidence and citations
+└── feat-some-branch/
+    └── …                            same shape, published at its slug
 ```
 
-The site root lists every published branch as a card carrying that branch's
-risk index, pass rate, passed-of-defined, last-run time and movement against
-its previous run, then a separate, lighter line with its cleanliness figures —
-duplication, duplicate tuples, argus cognitive complexity — plus direct links
-to its three pages.
+**Two hierarchies, one index.** A branch has two pages answering different
+questions, so the toggle switches what the whole list is about: the same
+branches, different figures, a different destination. Listing every branch
+twice down one page would grow with the branch count and repeat every name.
 
-Cleanliness sits on its own line rather than joining the figures above it. The
-row above is the verdict; cleanliness is reported and gates nothing, and
-putting a duplication percentage beside the risk index would read as though it
-were part of whether argus works.
+There is **no per-branch hub**. It restated the figures already on the index
+card and cost a click to reach the page the reader wanted, so `/<branch>/`
+redirects to the board. Kept as a redirect rather than removed so trimming a
+URL back a level, or an old bookmark, still lands somewhere useful.
 
-Both sets are read from files the branch publishes — `history.json` and
-`cleanliness.json` — rather than recomputed, so the root cannot disagree with
-the pages it links to. A branch whose metrics did not run renders
-*not measured* rather than being omitted, so it cannot look tidier than one
-whose did.
+Cleanliness is **not** folded into the test page. It is the one thing on the
+site that gates nothing, and putting a duplication percentage beside the risk
+index makes it read as part of the verdict on whether argus works.
 
-The branch root is a **hub**, not a page of its own findings. It carries the
-risk index and pass rate, the ref under test with its liveness split, and one
-card per child page restating that page's headline. The two children answer different questions —
-*does argus behave the way a consumer expects* and *how tidy is the code* — and
-keeping them apart is the point: nothing on the cleanliness page gates
-anything, and a duplication figure is not part of the verdict.
-
-Pages replaces the whole site on every deployment, so the publishing branch
-pulls the other branch's files back off the live site and republishes both —
-including the cleanliness page. A branch that has never run simply reappears
-the next time it does.
+Every page carries a breadcrumb back to the index, tabs between the two pages,
+and a switcher to the same view on another branch. Figures on the index are
+read from each branch's published `history.json` and `cleanliness.json` rather
+than recomputed, so it cannot disagree with the pages it links to.
 
 ## Repository Structure
 

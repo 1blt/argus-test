@@ -49,12 +49,18 @@ CSSEOF
 emit_nav_js() {
 cat <<'JSEOF'
 // renderNav({el, branch, slug, page, branches, up})
-//   page  : 'summary' | 'tests' | 'cleanliness'
-//   up    : relative prefix to the BRANCH root ('' or '../')
+//   page  : 'tests' | 'cleanliness'
+//   up    : relative prefix to the BRANCH root (always '../' today)
 //   branches: [{slug, name}] -- every branch with a published page
 //
-// The branch switcher keeps the reader on the SAME page they are looking at.
-// Jumping to another branch's summary when you were reading its board is a
+// TWO pages per branch, not three. The branch root used to serve a hub that
+// restated the figures already on the index card, and cost a click to reach
+// the page you actually wanted; it is a redirect to the board now. So the
+// branch is a LABEL here rather than a destination, and the tabs are the two
+// pages that exist.
+//
+// The switcher keeps the reader on the SAME page they are looking at. Jumping
+// to another branch's board when you were reading its metrics answers a
 // different question from the one they asked.
 function renderNav(cfg) {
   function esc(s) {
@@ -63,32 +69,27 @@ function renderNav(cfg) {
     });
   }
   var up = cfg.up || '';
-  var root = up + '../';              // the site root, above the branch
+  var root = up + '../';
   var PAGES = {
-    summary:     { label: 'Summary',         href: up },
-    tests:       { label: 'Test results',    href: up + 'tests/' },
+    tests:       { label: 'Test results',     href: up + 'tests/' },
     cleanliness: { label: 'Code cleanliness', href: up + 'code-cleanliness/' }
   };
 
   var crumbs = '<a href="' + root + '">All branches</a>' +
                '<span class="car">/</span>' +
-               (cfg.page === 'summary'
-                 ? '<span class="here">' + esc(cfg.branch) + '</span>'
-                 : '<a href="' + up + '">' + esc(cfg.branch) + '</a>' +
-                   '<span class="car">/</span>' +
-                   '<span class="here">' + esc(PAGES[cfg.page].label) + '</span>');
+               '<span class="here">' + esc(cfg.branch) + '</span>' +
+               '<span class="car">/</span>' +
+               '<span class="here">' + esc((PAGES[cfg.page] || {}).label || '') + '</span>';
 
   var tabs = Object.keys(PAGES).map(function (k) {
     return '<a href="' + PAGES[k].href + '"' + (k === cfg.page ? ' class="on"' : '') +
            '>' + esc(PAGES[k].label) + '</a>';
   }).join('');
 
-  // Only worth showing when there is somewhere else to go.
   var others = (cfg.branches || []).filter(function (b) { return b.slug !== cfg.slug; });
   var sw = '';
   if (others.length) {
-    var suffix = cfg.page === 'summary' ? '' :
-                 (cfg.page === 'tests' ? 'tests/' : 'code-cleanliness/');
+    var suffix = cfg.page === 'cleanliness' ? 'code-cleanliness/' : 'tests/';
     sw = '<div class="switch"><b>Same view on</b>' + others.map(function (b) {
       return '<a href="' + root + esc(b.slug) + '/' + suffix + '">' + esc(b.name || b.slug) + '</a>';
     }).join('') + '</div>';
