@@ -137,6 +137,7 @@ CATEGORIES=$(jq -n -c \
   --arg i1s "$(cat_status "$I1_RESULT")" \
   --arg i2s "$(cat_status "$I2_RESULT")" \
   --arg i3s "$(cat_status "$I3_RESULT")" \
+  --arg i4s "$(cat_status "${I4_RESULT:-skipped}")" \
   --argjson u "$UNIT_JSON" \
   --argjson a "$ACTIONS_JSON" \
   --argjson r "$REMOTE_JSON" \
@@ -160,8 +161,14 @@ CATEGORIES=$(jq -n -c \
     {name:"SCN Detector Tests",status:$ss, tests:$sc},
     {name:"Infrastructure Scan (I1)",   status:$i1s,tests:[$ig[0]]},
     {name:"No Hardcoded URLs (I2)",     status:$i2s,tests:[$ig[1]]},
-    {name:"Config-Driven Scan (I3)",    status:$i3s,tests:[$ig[2]]}
-  ]')
+    {name:"Config-Driven Scan (I3)",    status:$i3s,tests:[$ig[2]]},
+    {name:"Dispatch Targets (I4)",      status:$i4s,tests:[$ig[3]]}
+  ]
+  # Indexing a short REGRESSION_JSON yields nulls, which reach the browser as
+  # `null` entries and throw on the first property access -- the whole board
+  # goes blank. Drop them here: a regression row that did not report should
+  # make its category empty, not take the page down.
+  | map(.tests |= map(select(. != null)))')
 
 # ---------- test catalog (every test the suite DEFINES, not just what ran) ----
 # The run results only contain categories that executed, so on a push (where
@@ -686,19 +693,6 @@ mark { background: rgba(240,173,78,0.28); color: inherit; padding: 0 2px; }
         font-weight:600; letter-spacing:0.04em; text-transform:uppercase; white-space:nowrap; cursor:help; }
 .chip-warn { color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn); }
 .chip-ok   { color: var(--pass-ink); background: var(--pass-bg); border-color: var(--pass); }
-.clean { margin-top: 40px; }
-.clean h2 { font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:var(--track);
-            color:var(--fg); margin:0 0 4px; }
-.clean .sub { font-size:0.78rem; color:var(--fg3); margin:0 0 14px; max-width:70ch; }
-.clean-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
-.clean-card { border:1px solid var(--border); padding:12px 14px; }
-.clean-card .t { font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--fg3); }
-.clean-card .v { font-size:1.5rem; font-weight:300; color:var(--fg); margin:4px 0 2px; }
-.clean-card .v.na { font-size:0.85rem; color:var(--fg3); font-weight:400; }
-.clean-card .d { font-size:0.72rem; color:var(--fg3); line-height:1.45; }
-.clean-card .tag { display:inline-block; font-size:0.6rem; font-weight:700; letter-spacing:0.08em;
-                   border:1px solid var(--border); padding:0 4px; margin-left:6px; color:var(--fg3); vertical-align:middle; }
-@media (max-width: 640px) { .clean-grid { grid-template-columns: 1fr; } }
 footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--fg3); }
 
 /* theme toggle */
@@ -766,8 +760,6 @@ footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border
   </table>
   <div class="empty" id="empty" style="display:none"></div>
 
-  <section class="clean" id="clean" hidden></section>
-
   <footer id="foot"></footer>
 </div>
 <div class="tip" id="tip" style="display:none"></div>
@@ -798,7 +790,7 @@ HTMLEOF
   printf '  retiredGaps: %s,\n' "$RETIRED_JSON"
   printf '  liveness: %s,\n' "$LIVENESS_JSON"
   printf '  cleanliness: %s,\n' "$CLEAN_JSON"
-  printf '  cleanlinessCfg: %s,\n' "$CLEAN_CFG_JSON"
+  printf '  cleanlinessCfg: null,\n'
   printf '  failureClasses: %s,\n' "$CLASSES_JSON"
   printf '  catalog: %s,\n' "$CATALOG_JSON"
   printf '  jobs: %s,\n' "${JOBS_JSON:-[]}"
@@ -868,6 +860,9 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
   }
   meta.push(esc(d.date));
   meta.push('scope <span class="mono">' + esc(d.scope) + '</span>');
+  if (d.cleanliness) {
+    meta.push('<a href="code-cleanliness/">code cleanliness</a>');
+  }
   meta.push('<a href="' + d.runUrl + '">view run &#8599;</a>');
   $('head-meta').innerHTML = meta.join('<span class="sep">&middot;</span>');
 
@@ -1736,101 +1731,6 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
     }
   });
 
-  // ------------------------------------------------------------- cleanliness
-  // KISS/DRY, reported and never gated. Two targets side by side and never
-  // summed: tidy tests must not offset untidy source, and a combined number
-  // would also make this board assert something about argus's internals that
-  // its maintainers have not signed up to.
-  //
-  // A metric that could not be computed renders "not measured", not 0. Zero
-  // and "no tool available" look identical otherwise, and the second is the
-  // absence of evidence rather than evidence of cleanliness.
-  (function renderCleanliness() {
-    const C = d.cleanliness, CFG = d.cleanlinessCfg;
-    if (!C || !CFG || !C.targets) return;
-    const host = $('clean');
-    if (!host) return;
-
-    function card(title, value, detail, tag, na) {
-      return '<div class="clean-card">' +
-             '<div class="t">' + esc(title) + (tag ? '<span class="tag">' + esc(tag) + '</span>' : '') + '</div>' +
-             '<div class="v' + (na ? ' na' : '') + '">' + esc(value) + '</div>' +
-             '<div class="d">' + detail + '</div></div>';
-    }
-
-    let html = '';
-    ['suite', 'argus'].forEach(function (key) {
-      const t = C.targets[key], cfg = (CFG.targets || {})[key];
-      if (!t || !cfg) return;
-      let cards = '';
-
-      // --- duplication (DRY) ---
-      const m = (CFG.metrics || {}).duplication || {};
-      if (t.duplication && t.duplication.percent !== null && t.duplication.percent !== undefined) {
-        const pct = Number(t.duplication.percent).toFixed(1);
-        cards += card(m.label || 'Duplicated lines', pct + '%',
-          esc(t.duplication.clones + ' clone group(s), ' + t.duplication.duplicated_lines +
-              ' of ' + t.duplication.total_lines + ' lines.') +
-          '<br><span title="' + esc(m.caveat || '') + '" style="cursor:help;text-decoration:underline dotted">caveat</span>',
-          'DRY');
-      } else {
-        cards += card(m.label || 'Duplicated lines', 'not measured',
-          'No clone detector available in this run. Absent is not zero.', 'DRY', true);
-      }
-
-      // --- cognitive complexity (KISS) ---
-      const mc = (CFG.metrics || {}).cognitive || {};
-      if (t.cognitive && t.cognitive.worst !== null && t.cognitive.worst !== undefined) {
-        cards += card(mc.label || 'Cognitive complexity', String(t.cognitive.worst),
-          esc(String(t.cognitive.over_threshold) + ' of ' + t.cognitive.units +
-              ' unit(s) over ' + t.cognitive.threshold +
-              (t.cognitive.worst_at ? '. Worst: ' + t.cognitive.worst_at : '')),
-          'KISS');
-      } else {
-        cards += card(mc.label || 'Cognitive complexity', 'not applicable',
-          'No implementation parses Actions YAML or shell. Reported blank rather than substituting a metric that measures something else.',
-          'KISS', true);
-      }
-
-      // --- duplicate test tuples (DRY, suite only) ---
-      const mt = (CFG.metrics || {}).tuple_dupes || {};
-      if (t.tuple_dupes) {
-        const td = t.tuple_dupes;
-        const unexplained = (td.exact_rows || 0) + (td.invocation_rows || 0);
-        let detail = esc(td.rows + ' matrix rows. ' + (td.exact_rows || 0) +
-                         ' exact duplicate(s), ' + (td.invocation_rows || 0) +
-                         ' duplicate invocation(s)');
-        const ex = (td.exempted || []);
-        if (ex.length) {
-          detail += esc(', ' + ex.length + ' annotated as deliberate') +
-                    ' <span title="' + esc(ex.map(function (g) {
-                      return g.tests.join(' = ') + ': ' + g.allowed;
-                    }).join(' | ')) + '" style="cursor:help;text-decoration:underline dotted">(which)</span>';
-        }
-        detail += '.';
-        cards += card(mt.label || 'Duplicate test tuples', String(unexplained), detail, 'DRY');
-      }
-
-      html += '<div style="margin-bottom:18px"><div class="t" style="font-size:0.7rem;font-weight:700;' +
-              'text-transform:uppercase;letter-spacing:0.06em;color:var(--fg);margin-bottom:8px">' +
-              esc(cfg.label) + '</div>' +
-              '<div class="clean-grid">' + cards + '</div>' +
-              '<div class="d" style="font-size:0.72rem;color:var(--fg3);margin-top:7px">' +
-              esc(cfg.note || '') + '</div></div>';
-    });
-
-    if (!html) return;
-    host.innerHTML =
-      '<h2>Code cleanliness</h2>' +
-      '<p class="sub">KISS and DRY indicators, reported and never gated \u2014 a red build here would have to mean ' +
-      'argus broke, not that a function grew. The two targets are never summed. Cyclomatic complexity, Halstead ' +
-      'and the Maintainability Index are deliberately absent: the first correlates about 0.9 with raw line count ' +
-      'and the others have no dependable independent predictive value. Rationale and citations are in ' +
-      '<span class="mono">.github/data/cleanliness-metrics.json</span>.</p>' +
-      html;
-    host.hidden = false;
-  })();
-
   $('foot').innerHTML =
     '<div class="footnotes"><div class="fn-head">References</div>' +
     REFS.map(function (r) {
@@ -1843,7 +1743,8 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
     '<div class="foot-meta">Generated by the test suite CI on every push. ' +
     'Weights live in <span class="mono">.github/data/failure-classes.json</span>; ' +
     'coverage gaps in <span class="mono">.github/data/coverage-gaps.json</span>; ' +
-    'cleanliness metrics in <span class="mono">.github/data/cleanliness-metrics.json</span>.</div>';
+    'cleanliness metrics on their <a href="code-cleanliness/">own page</a>, ' +
+    'configured in <span class="mono">.github/data/cleanliness-metrics.json</span>.</div>';
 
   // Theme: follow the OS by default, let the reader override, remember it.
   // Storage can throw in private windows, so every access is guarded.

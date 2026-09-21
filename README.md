@@ -512,6 +512,28 @@ gh workflow run test-suite.yml -f argus_ref=feat/my-feature
 gh run watch
 ```
 
+### Site layout
+
+Each branch publishes its own subtree, so `dev` results never overwrite
+`main`'s and the two histories stay independent:
+
+```
+argus-test/
+├── index.html                       root switcher (or a redirect, with one branch)
+├── main/
+│   ├── index.html                   the dashboard
+│   ├── history.json                 last 20 runs, for the score chart
+│   └── code-cleanliness/
+│       └── index.html               KISS/DRY, rationale and citations
+└── dev/
+    └── …                            same shape
+```
+
+Pages replaces the whole site on every deployment, so the publishing branch
+pulls the other branch's files back off the live site and republishes both —
+including the cleanliness page. A branch that has never run simply reappears
+the next time it does.
+
 ## Repository Structure
 
 ```
@@ -624,7 +646,11 @@ argus.
 
 ## Code cleanliness
 
-A KISS/DRY panel on the dashboard, **reported and never gated**. A red build
+Its **own page**, at `<branch>/code-cleanliness/`, linked from the dashboard
+header — deliberately not a panel under the verdict. The board answers one
+question, *does argus still behave the way a consumer expects*, and a
+duplication figure sitting beneath it invites the reading that it is part of
+that answer. It isn't: this is **reported and never gated**. A red build
 here would have to mean argus broke, not that a shell function grew; and a
 gated cleanliness number gets gamed rather than met. Two targets — this suite
 and argus — reported separately and never summed, so tidy tests cannot offset
@@ -640,8 +666,14 @@ Cyclomatic complexity, Halstead and the Maintainability Index are deliberately
 **excluded**: cyclomatic complexity correlates ≈0.9 with raw line count
 (Graylin et al. 2009), so it largely re-measures size, and the other two have no
 dependable independent predictive value. Chidamber & Kemerer is validated but
-object-oriented, and this repository is YAML and bash. Full citations are in
-[`.github/data/cleanliness-metrics.json`](.github/data/cleanliness-metrics.json).
+object-oriented, and this repository is YAML and bash.
+
+The **rationale and the full IEEE citations render on the page itself**, not
+only in [`cleanliness-metrics.json`](.github/data/cleanliness-metrics.json) — a
+number whose justification sits in a file nobody opens is a number people argue
+with from memory. The page carries the measurements, the duplicate groups with
+their annotations, a table of what is excluded and why, and the six references
+with back-links.
 
 Duplicate-tuple detection runs in two tiers — **exact** (every parameter
 matches) and **invocation** (the same argus call, differing only by container
