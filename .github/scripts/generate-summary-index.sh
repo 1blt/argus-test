@@ -268,21 +268,22 @@ __NAV_JS__
           esc(String(PAGE.argusSha).slice(0, 7)) + '</a>'
         : ''));
   }
-  // The liveness split belongs on the hub, not only on the dashboard: both
-  // child pages were measured against this ref, and for a branch the label is
-  // only half true.
+  // Same rule as the board: say it in words, and only when the Python that
+  // ran differs from the version already named beside it.
   if (LIVE && LIVE.summary) {
     var L = LIVE.summary;
-    if (L.sdk_live === false) {
-      var pins = (L.sdk_pins || []).join(', ') || 'a release tag';
-      m.push('<span class="chip chip-warn" title="' + esc(
-        'The entry-point workflow YAML comes from ' + (L.ref || 'this ref') + ', but all ' +
-        L.stale_nested + ' nested references stay pinned (' + L.live_nested + ' live). ' +
-        'setup-argus installs the SDK from its own checkout, so the Python under test is ' + pins +
-        '. SDK behaviour is covered by the Runtime Environment tests, which check argus out at the ref.') +
-        '">YAML from ref &middot; SDK <span class="mono">' + esc(pins) + '</span></span>');
+    var pins = (L.sdk_pins || []).join(', ');
+    var shown = (PAGE.argusRef || 'main') === 'main' ? (PAGE.argusVersion || '') : '';
+    if (L.sdk_live === false && pins && pins !== shown) {
+      var tip = 'This run used the workflow files from ' + (L.ref || 'this ref') +
+        ', but the argus Python package came from release ' + pins +
+        ' \u2014 setup-argus is pinned inside those workflow files. Python behaviour is ' +
+        'covered instead by the Runtime Environment tests (N1\u2013N5), which check argus ' +
+        'out at the ref.';
+      m.push('<span class="chip chip-warn" title="' + esc(tip) +
+             '">Python from <span class="mono">v' + esc(pins) + '</span>, not this ref</span>');
     } else if (L.sdk_live === true) {
-      m.push('<span class="chip chip-ok" title="Workflow YAML and SDK both resolve to this ref.">fully branch-live</span>');
+      m.push('<span class="chip chip-ok" title="Workflow files and the Python package both come from this ref.">fully branch-live</span>');
     }
   }
   m.push(esc(PAGE.date));

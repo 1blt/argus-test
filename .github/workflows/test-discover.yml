@@ -177,14 +177,14 @@ jobs:
           # A missing artifact must surface as "skip" -- no assurance -- rather
           # than vanishing and leaving the board reporting four tests as all.
           if [ ! -f ./results/result-D5.json ]; then
-            echo '{"id":"D5","status":"skip","child":""}' > ./results/result-D5.json
+            echo '{"id":"D5","status":"skip","child":"","reason":"Asserts container-scan.yml workflow_call outputs, which only refs carrying argus PR #427 declare. This run used a ref without them."}' > ./results/result-D5.json
             echo "D5 produced no artifact; recorded as skip"
           fi
           RESULTS=$(jq -s -c --slurpfile d /tmp/detail.json '
             # Filter by id rather than trusting the artifact glob. All suites share
             # one workflow run, so a broad pattern pulls in results from other suites and
             # tonumber then dies on a foreign id -- which is exactly how this failed.
-            [ .[] | select(.id | test("^D[0-9]+$")) | { id: .id, name: ($d[0][.id][0] // .id), detail: ($d[0][.id][1] // ""), status: .status } ]
+            [ .[] | select(.id | test("^D[0-9]+$")) | { id: .id, name: ($d[0][.id][0] // .id), detail: ($d[0][.id][1] // ""), status: .status, reason: (.reason // "") } ]
             | sort_by(.id | ltrimstr("D") | tonumber)
           ' ./results/result-*.json)
           echo "$RESULTS" | jq -e 'length > 0' >/dev/null || { echo "::error::no discover results collected"; exit 1; }

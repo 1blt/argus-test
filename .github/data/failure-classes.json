@@ -62,15 +62,15 @@
   },
   "short": {
     "open": "fail-open",
-    "degraded": "thinner scan",
+    "degraded": "scanned less than asked",
     "closed": "fail-closed",
-    "auxiliary": "auxiliary"
+    "auxiliary": "reporting broke"
   },
   "glossary": {
     "open": "argus reported success without actually running the check. Nothing warns you, so unscanned code can ship looking approved.",
-    "degraded": "argus ran, but with fewer sub-scanners than the caller asked for or expected. The gate held over less than it appears to -- and if the missing sub-scanners are not named, you cannot tell this apart from a full scan.",
+    "degraded": "argus scanned, but with fewer sub-scanners than were asked for. The gate held over LESS than it appears to: a green tick that covers part of what the caller requested. Distinct from a broken upload, where the scan itself ran in full.",
     "closed": "argus stopped or errored when it should have worked. Your pipeline blocks, which is disruptive, but nothing slips past unnoticed.",
-    "auxiliary": "Something alongside the scan broke, such as uploading a report. The scan itself ran at full strength and the gate held, so nothing unsafe got through."
+    "auxiliary": "Everything about the scan worked -- every requested sub-scanner ran and the gate decided correctly -- but something AROUND it broke, such as uploading the SARIF report. Security coverage is unchanged; a reporting path is not."
   },
   "status": {
     "open": {
@@ -106,9 +106,9 @@
   },
   "descriptions": {
     "open": "argus reported success without actually running the check. Nothing warns you, so unscanned code can ship looking approved.",
-    "degraded": "argus ran, but with fewer sub-scanners than the caller asked for or expected. The gate held over less than it appears to -- and if the missing sub-scanners are not named, you cannot tell this apart from a full scan.",
+    "degraded": "argus scanned, but with fewer sub-scanners than were asked for. The gate held over LESS than it appears to: a green tick that covers part of what the caller requested. Distinct from a broken upload, where the scan itself ran in full.",
     "closed": "argus stopped or errored when it should have worked. Your pipeline blocks, which is disruptive, but nothing slips past unnoticed.",
-    "auxiliary": "Something alongside the scan broke, such as uploading a report. The scan itself ran at full strength and the gate held, so nothing unsafe got through."
+    "auxiliary": "Everything about the scan worked -- every requested sub-scanner ran and the gate decided correctly -- but something AROUND it broke, such as uploading the SARIF report. Security coverage is unchanged; a reporting path is not."
   },
   "classes": {
     "open": [
@@ -130,16 +130,17 @@
       "S18",
       "W4"
     ],
-    "degraded": [
-      "N1",
-      "N5"
-    ],
+    "degraded": [],
     "auxiliary": [
       "E11",
       "E14",
       "S16",
       "S25",
       "U4"
+    ],
+    "closed": [
+      "N1",
+      "N5"
     ]
   },
   "references": [
@@ -178,5 +179,19 @@
     "Security tab, not the scan itself. S16 is dry-run issue payloads, S25 the",
     "optional AI fallback, U4 the SCN detector's own unit tests -- all real, none",
     "of them a control a consumer is relying on at scan time."
+  ],
+  "_class_note": [
+    "A class says what a FAILURE of that test would cost a consumer -- not what",
+    "the test is about. N1 and N5 concern degraded scanning, but a failure of",
+    "either means argus refused to finish a scan it should have finished, which",
+    "is fail-closed. They were filed under 'degraded' on the strength of their",
+    "subject matter, which put a class on the board that no failing test could",
+    "honestly produce.",
+    "",
+    "'degraded' is kept, and empty. It belongs to a test whose failure means the",
+    "scan silently covered less than the caller asked for. N2 asserts the loud",
+    "half of that contract; the quiet half -- a run that drops a sub-scanner and",
+    "still reports success -- is not asserted anywhere yet, and is CAND-5 and",
+    "CAND-7 on the audit list."
   ]
 }

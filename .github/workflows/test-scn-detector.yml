@@ -1871,6 +1871,6 @@ jobs:
               {"id":"S22","name":"cfn classification","detail":"Does the SCN detector classify a CloudFormation S3 bucket tag change as ROUTINE?","status":$s22},
               {"id":"S23","name":"custom config","detail":"Does the SCN detector apply a custom config_file in place of the default profile?","status":$s23},
               {"id":"S24","name":"single-file multi-resource","detail":"Does the SCN detector extract both resources when one .tf file declares two?","status":$s24},
-              {"id":"S25","name":"AI fallback","detail":"Does the SCN detector fall back to AI classification instead of MANUAL_REVIEW for an unmatched resource?","status":$s25}
+              {"id":"S25","name":"AI fallback","detail":"Does the SCN detector fall back to AI classification instead of MANUAL_REVIEW for an unmatched resource?","status":$s25,"reason":"Needs ANTHROPIC_API_KEY to reach the classifier. Without it the test is skipped rather than failing, because an absent key is a configuration fact, not an argus defect."}
             ]')
           echo "results=$RESULTS" >> "$GITHUB_OUTPUT"

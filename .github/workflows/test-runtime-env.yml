@@ -259,6 +259,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       verdict: ${{ steps.assert.outputs.verdict }}
+      reason: ${{ steps.assert.outputs.reason }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -312,6 +313,7 @@ jobs:
           if ! grep -q "pull" "$PULL_LOG"; then
             echo "::warning title=N4 could not reach its subject::No runtime pull was attempted even with a sub-scanner that needs a local image, so there was no retry to inspect. Recorded as SKIP -- no assurance -- rather than pass, because a test that never reached the behaviour it names has not verified it."
             echo "verdict=skip" >> "$GITHUB_OUTPUT"
+            echo "reason=No runtime pull was attempted even with a sub-scanner that needs a local image, so there was no retry to inspect." >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -429,6 +431,7 @@ jobs:
           N3: ${{ needs.n3-unscannable-exit-code.result }}
           N4: ${{ needs.n4-retry-platform.result }}
           N4_RAW: ${{ needs.n4-retry-platform.outputs.verdict }}
+          N4_WHY: ${{ needs.n4-retry-platform.outputs.reason }}
           N5: ${{ needs.n5-local-image-platform-pin.result }}
         run: |
           to_status() {
@@ -457,12 +460,13 @@ jobs:
             --arg n2 "$(half "$N2_RAW" "$PAIR_RESULT")" \
             --arg n3 "$(to_status "$N3")" \
             --arg n4 "$(half "$N4_RAW" "$N4")" \
+            --arg n4why "$N4_WHY" \
             --arg n5 "$(to_status "$N5")" \
             '[
               {"id":"N1","name":"daemonless default scan","detail":"Does a default container scan still exit 0 on a runner with trivy and grype but no container runtime, naming the sub-scanners that could not run?","status":$n1},
               {"id":"N2","name":"daemonless explicit request","detail":"Does an explicitly requested sub-scanner that cannot run on this host exit non-zero rather than reporting success?","status":$n2},
               {"id":"N3","name":"unscannable image exit code","detail":"Does argus exit 2, distinct from 1, when an image cannot be pulled and nothing could be scanned?","status":$n3},
-              {"id":"N4","name":"retry platform is published","detail":"Does a failed pull retry against a platform the manifest publishes rather than hardcoding linux/amd64?","status":$n4},
+              {"id":"N4","name":"retry platform is published","detail":"Does a failed pull retry against a platform the manifest publishes rather than hardcoding linux/amd64?","status":$n4,"reason":$n4why},
               {"id":"N5","name":"local image platform pin","detail":"Does a locally-built never-pushed image scan under an explicit platform pin, naming which architecture the findings describe?","status":$n5}
             ]')
           echo "results=$RESULTS" >> "$GITHUB_OUTPUT"

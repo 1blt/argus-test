@@ -939,30 +939,38 @@ __NAV_JS__
         esc(d.argusShaShort) + '</a>'
       : ' <span class="mono" title="commit could not be resolved">(sha unknown)</span>'));
   }
-  // What of this ref is actually under test. A branch run gets the branch's
-  // workflow YAML, but nested actions -- including setup-argus, which installs
-  // the SDK -- keep the release pin written into that file. Naming a ref while
-  // silently testing released Python for half of it is worse than saying
-  // nothing, so the split is stated next to the ref rather than in a footnote.
+  // WHAT THIS RUN ACTUALLY EXECUTED, when it is not what the ref implies.
+  //
+  // Referencing container-scan.yml at a branch gets that branch's workflow
+  // files, but setup-argus is pinned inside them, so the argus Python package
+  // comes from a release instead. The reader needs to know that the Python was
+  // not the branch's -- they do not need the words "YAML" or "SDK" to be told
+  // it, which is what the previous chip said and what nobody could parse.
+  //
+  // Suppressed when the pin matches the version already shown. On main at
+  // v1.12.5 the chip said "SDK 1.12.5" beside "argus v1.12.5": the same number
+  // twice, warning about nothing. It earns space only when the two disagree,
+  // which is exactly the case worth flagging.
   if (d.liveness && d.liveness.summary) {
     const L = d.liveness.summary;
-    if (L.sdk_live === false) {
-      const pins = (L.sdk_pins || []).join(', ') || 'a release tag';
-      meta.push('<span class="chip chip-warn" title="' +
-        esc('The workflow YAML comes from ' + (L.ref || 'this ref') + ', but every nested reference is pinned: ' +
-            L.stale_nested + ' pinned vs ' + L.live_nested + ' live. setup-argus installs the SDK from its own checkout, so the Python under test is ' + pins +
-            '. SDK-level behaviour is covered by the Runtime Environment tests (N1-N5), which check argus out at the ref.') +
-        '">YAML from ref &middot; SDK <span class="mono">' + esc(pins) + '</span></span>');
-      // The SDK pin is the other half of what ran. Link it to its release so
-      // the reader can reach the Python that was actually installed.
-      if ((L.sdk_pins || []).length === 1) {
-        meta.push('<a class="mono" href="' + server + '/' + d.argusRepo +
-                  '/releases/tag/' + esc(L.sdk_pins[0]) +
-                  '" title="the SDK release actually installed by setup-argus">sdk ' +
-                  esc(L.sdk_pins[0]) + '</a>');
-      }
+    const pins = (L.sdk_pins || []).join(', ');
+    const shown = (d.argusRef || 'main') === 'main' ? (d.argusVersion || '') : '';
+    if (L.sdk_live === false && pins && pins !== shown) {
+      const tip = 'This run used the workflow files from ' + (L.ref || 'this ref') +
+        ', but the argus Python package came from release ' + pins +
+        ' \u2014 setup-argus is pinned inside those workflow files, so it installs from the ' +
+        'release rather than the ref. ' + L.stale_nested + ' of ' +
+        (L.stale_nested + L.live_nested) + ' nested references are pinned this way. ' +
+        'Python behaviour is covered instead by the Runtime Environment tests (N1\u2013N5), ' +
+        'which check argus out at the ref and run the CLI directly.';
+      const ver = (pins.indexOf(',') === -1)
+        ? '<a class="mono" href="' + server + '/' + d.argusRepo + '/releases/tag/' + esc(pins) +
+          '">v' + esc(pins) + '</a>'
+        : '<span class="mono">' + esc(pins) + '</span>';
+      meta.push('<span class="chip chip-warn" title="' + esc(tip) +
+                '">Python from ' + ver + ', not this ref</span>');
     } else if (L.sdk_live === true) {
-      meta.push('<span class="chip chip-ok" title="Workflow YAML and SDK both resolve to this ref.">fully branch-live</span>');
+      meta.push('<span class="chip chip-ok" title="Workflow files and the Python package both come from this ref.">fully branch-live</span>');
     }
   }
   meta.push(esc(d.date));
@@ -990,6 +998,7 @@ __NAV_JS__
       kind: 'test', id: c.id, name: c.name,
       question: (r && r.detail) || c.question || '',
       status: r ? r.status : 'notrun',
+      reason: r ? (r.reason || '') : '',
       category: c.category || (r && r.category),
       file: c.file || '', line: c.line || null, why: '', scope: c.scope || 'all',
       checks: (r && r.checks) || c.checks || null,
@@ -1209,6 +1218,7 @@ __NAV_JS__
       return { key: FILTER_KEY[c] || c,
                cls: (c === 'auxiliary' ? 'warn' : 'fail'),
                label: SHORT[c] || LBL[c] || c,
+               gloss: (LBL[c] ? LBL[c] + ' \u2014 ' : '') + (GLOSS[c] || ''),
                n: (byClass[c] || []).length };
     }));
   const statsEl = $('stats');
@@ -1219,6 +1229,10 @@ __NAV_JS__
     b.type = 'button';
     b.dataset.filter = s.key;
     b.setAttribute('aria-pressed', s.key === 'all' ? 'true' : 'false');
+    // The label alone is a two-word abbreviation of a whole failure class.
+    // "scanned less than asked" means nothing without the sentence behind it,
+    // so the glossary entry rides along as the tooltip.
+    if (s.gloss) { b.title = s.gloss; }
     b.innerHTML = '<b>' + s.n + '</b> ' + s.label;
     b.addEventListener('click', function () { toggleFilter(s.key); });
     statsEl.appendChild(b);
@@ -1501,7 +1515,15 @@ __NAV_JS__
   }
   // A not-run test is a scheduling decision, not a defect: say which scope runs it.
   function notRunNote(x) {
-    if (x.kind !== 'test' || x.status !== 'notrun') return '';
+    if (x.kind !== 'test') return '';
+    // A test that produced no verdict has to say why. "Not run" on its own is
+    // the shape this suite rejects everywhere else: it makes "we did not look"
+    // and "there is nothing wrong" read the same. The reason travels with the
+    // result when the test knows it; scope and cancellation are inferred.
+    if (x.reason) return x.reason;
+    if (x.status === 'skip')   return 'Skipped: this test declined to run and did not say why. That is a gap in the test, not a result.';
+    if (x.status === 'cancel') return 'Cancelled before it could report -- the run was superseded or stopped, so this is not a verdict either way.';
+    if (x.status !== 'notrun') return '';
     return x.scope && x.scope !== 'all'
       ? 'Runs only when the suite is dispatched with scope=' + x.scope + '.'
       : 'Not run in this scope.';
