@@ -200,10 +200,10 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ==========================================================================
-  # I1: Infrastructure scan regression
+  # I5: Infrastructure scan regression
   # ==========================================================================
-  i1-infrastructure-scan:
-    name: "I1: infrastructure-scan regression"
+  i5-infrastructure-scan:
+    name: "I5: infrastructure-scan regression"
     runs-on: ubuntu-latest
     timeout-minutes: 40
     needs: reap-orphans
@@ -213,7 +213,7 @@ jobs:
       - id: t
         uses: ./.github/actions/argus-dispatch
         with:
-          test_id: I1
+          test_id: I5
           expect: success
           workflow: argus-iac-run.yml
           # iac_path was the default "infrastructure", which does not exist here,
@@ -288,6 +288,64 @@ jobs:
               sys.exit(1)
           print("No hardcoded github.com URLs in action logic")
           PYEOF
+  # ==========================================================================
+  # I1: the happy path.
+  #
+  # WHAT "HAPPY PATH" MEANS HERE. The ordinary, documented, first-thing-a-
+  # consumer-does use of argus, with nothing adversarial in it: point
+  # container-scan.yml at a clean image, run the default scanner set, and set a
+  # realistic severity gate. Everything configured the way the README tells a
+  # newcomer to configure it. The expected outcome is a green check over an
+  # image that was genuinely scanned and genuinely had nothing at or above the
+  # threshold.
+  #
+  # WHY IT IS WORTH A TEST OF ITS OWN, AND WHY IT IS I1. Every other test in
+  # this suite pins a specific edge, gate or failure mode; each one holds some
+  # input wrong on purpose. It is entirely possible for all of them to pass
+  # while the plain path a real consumer copies out of the README is broken --
+  # nothing else here asserts the whole ordinary sequence end to end. This is
+  # the smoke test, and it is numbered first because it is the one to read
+  # first: if I1 is red, argus does not work for its primary use case, whatever
+  # else is green.
+  #
+  # WHY IT DOES NOT ASSERT "GREEN" ALONE. A happy-path test that only checks
+  # the conclusion is the silent pass this suite exists to catch -- a scan that
+  # ran nothing at all also exits 0. So on refs that publish the workflow_call
+  # outputs it additionally requires images_scanned >= 1 and an overall_status
+  # of success: the gate passed AND something was actually examined. On older
+  # refs the output check is skipped with a warning rather than failing, since
+  # the conclusion assertion is still meaningful there.
+  #
+  # fail_on_severity is 'critical', not 'none'. A gate set to 'none' cannot
+  # fire, so it would prove only that the workflow ran; 'critical' is what a
+  # consumer would actually set. The CLEAN anchor has no package database, so
+  # the result is deterministic rather than drifting with upstream CVEs.
+  # ==========================================================================
+  i1-happy-path:
+    name: "I1: happy path"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: reap-orphans
+    if: inputs.scope == 'all' || inputs.scope == 'regression' || github.event_name == 'schedule' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: ./.github/actions/argus-scan
+        with:
+          test_id: I1
+          expect: success
+          argus_ref: ${{ inputs.argus_ref || 'main' }}
+          scan_mode: remote
+          image_ref: gcr.io/distroless/static-debian12:latest
+          container_name: i1-happy-path
+          scanners: trivy,grype,syft
+          fail_on_severity: critical
+          allow_failure: 'false'
+          assert_outputs_optional: 'true'
+          assert_outputs: >-
+            .outputs.overall_status == "success"
+            and (.outputs.images_scanned | tonumber) >= 1
+
   # ==========================================================================
   # I4: dispatch targets enumerate exactly the refs in argus-refs.json
   #
@@ -378,6 +436,9 @@ jobs:
     outputs:
       # $GITHUB_ENV does not cross jobs, so `publish` reads the artifact name here
       dashboard_artifact: dashboard-${{ steps.branch.outputs.slug }}
+      # False when any suite was cancelled, so `publish` can refuse a partial
+      # board. Failed is fine and still publishes; cancelled is not.
+      run_complete: ${{ steps.completeness.outputs.complete }}
     needs:
       - unit-tests
       - action-tests
@@ -387,9 +448,10 @@ jobs:
       - edge-tests
       - workflow-tests
       - scn-tests
-      - i1-infrastructure-scan
+      - i5-infrastructure-scan
       - i2-no-hardcoded-urls
       - i3-config-scan
+      - i1-happy-path
       - i4-dispatch-targets-cover-refs
       - runtime-env-tests
     if: always()
@@ -398,6 +460,36 @@ jobs:
     # so with it, this job died in 2s on every non-main branch and the dashboard
     # was never generated there at all. Publishing now lives in `publish` below.
     steps:
+      # Cancelled is not failed. A failing suite publishes -- that is the point
+      # of the board. A cancelled one has no verdict to report.
+      - name: Was this run actually completed?
+        id: completeness
+        env:
+          R1: ${{ needs.unit-tests.result }}
+          R2: ${{ needs.action-tests.result }}
+          R3: ${{ needs.runtime-env-tests.result }}
+          R4: ${{ needs.remote-tests.result }}
+          R5: ${{ needs.discover-tests.result }}
+          R6: ${{ needs.combination-tests.result }}
+          R7: ${{ needs.edge-tests.result }}
+          R8: ${{ needs.workflow-tests.result }}
+          R9: ${{ needs.scn-tests.result }}
+          R10: ${{ needs.i1-happy-path.result }}
+          R11: ${{ needs.i2-no-hardcoded-urls.result }}
+          R12: ${{ needs.i3-config-scan.result }}
+          R13: ${{ needs.i4-dispatch-targets-cover-refs.result }}
+          R14: ${{ needs.i5-infrastructure-scan.result }}
+        run: |
+          set -uo pipefail
+          ALL="$R1 $R2 $R3 $R4 $R5 $R6 $R7 $R8 $R9 $R10 $R11 $R12 $R13 $R14"
+          echo "category results: $ALL"
+          if printf '%s' "$ALL" | grep -qw "cancelled"; then
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Partial run, not published::At least one suite was cancelled, so this run has no complete verdict. The dashboard is still generated and uploaded as an artifact, but it will not overwrite the published board -- a partial board reads as though tests were skipped rather than stopped."
+          else
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate consolidated summary
         env:
           UNIT_JSON: ${{ needs.unit-tests.outputs.results }}
@@ -418,10 +510,11 @@ jobs:
           WF_RESULT: ${{ needs.workflow-tests.result }}
           SCN_RESULT: ${{ needs.scn-tests.result }}
           RUNTIME_RESULT: ${{ needs.runtime-env-tests.result }}
-          I1: ${{ needs.i1-infrastructure-scan.result }}
+          I1: ${{ needs.i1-happy-path.result }}
           I2: ${{ needs.i2-no-hardcoded-urls.result }}
           I3: ${{ needs.i3-config-scan.result }}
           I4: ${{ needs.i4-dispatch-targets-cover-refs.result }}
+          I5: ${{ needs.i5-infrastructure-scan.result }}
           SCOPE: ${{ inputs.scope || 'all' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -469,16 +562,19 @@ jobs:
           I2_STATUS=$(to_status "$I2")
           I3_STATUS=$(to_status "$I3")
           I4_STATUS=$(to_status "$I4")
+          I5_STATUS=$(to_status "$I5")
           REGRESSION_ARR=$(jq -n -c \
             --arg i1 "$I1_STATUS" \
             --arg i2 "$I2_STATUS" \
             --arg i3 "$I3_STATUS" \
             --arg i4 "$I4_STATUS" \
+            --arg i5 "$I5_STATUS" \
             '[
-              {"id":"I1","name":"infrastructure-scan regression","detail":"Does the infrastructure-scan reusable workflow still complete a trivy-iac and checkov run?","status":$i1},
+              {"id":"I1","name":"happy path","detail":"Does argus work for a happy path workflow? The ordinary documented use with nothing adversarial in it: a clean image, the default scanner set and a realistic severity gate. Green only counts if an image was actually scanned, so it also requires images_scanned of at least 1 and an overall_status of success.","status":$i1},
               {"id":"I2","name":"no hardcoded URLs","detail":"Are the container action shell scripts still free of hardcoded github.com URLs?","status":$i2},
               {"id":"I3","name":"config-driven scan","detail":"Does the container-scan-from-config reusable workflow still scan the containers named in a config file?","status":$i3},
-              {"id":"I4","name":"dispatch targets cover every ref","detail":"Does every argus ref this suite can be pointed at have a matching job in all four dispatch targets, so a run cannot report a pass for a ref nothing called?","status":$i4}
+              {"id":"I4","name":"dispatch targets cover every ref","detail":"Does every argus ref this suite can be pointed at have a matching job in all four dispatch targets, so a run cannot report a pass for a ref nothing called?","status":$i4},
+              {"id":"I5","name":"infrastructure-scan regression","detail":"Does the infrastructure-scan reusable workflow still complete a trivy-iac and checkov run?","status":$i5}
             ]')
 
           # Merge all into one array
@@ -563,9 +659,11 @@ jobs:
             echo "| $(cat_icon "$WF_RESULT") | Top-level Workflow Tests | 4 | $(cat_counts "$WF_ARR") |"
             echo "| $(cat_icon "$SCN_RESULT") | SCN Detector Tests | 25 | $(cat_counts "$SCN_ARR") |"
             echo "| $(cat_icon "$RUNTIME_RESULT") | Runtime Environment Tests | 5 | $(cat_counts "$RUNTIME_ARR") |"
-            echo "| $(cat_icon "$I1") | Infrastructure Scan (I1) | 1 | $([ "$I1_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
+            echo "| $(cat_icon "$I1") | Happy Path (I1) | 1 | $([ "$I1_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo "| $(cat_icon "$I2") | No Hardcoded URLs (I2) | 1 | $([ "$I2_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo "| $(cat_icon "$I3") | Config-Driven Scan (I3) | 1 | $([ "$I3_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
+            echo "| $(cat_icon "$I4") | Dispatch Targets (I4) | 1 | $([ "$I4_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
+            echo "| $(cat_icon "$I5") | Infrastructure Scan (I5) | 1 | $([ "$I5_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo ""
             echo "---"
             echo ""
@@ -667,7 +765,7 @@ jobs:
           EDGE: ${{ needs.edge-tests.result }}
           WF: ${{ needs.workflow-tests.result }}
           SCN: ${{ needs.scn-tests.result }}
-          I1: ${{ needs.i1-infrastructure-scan.result }}
+          I1: ${{ needs.i1-happy-path.result }}
           I2: ${{ needs.i2-no-hardcoded-urls.result }}
           I3: ${{ needs.i3-config-scan.result }}
         run: |
@@ -806,10 +904,11 @@ jobs:
           EDGE_RESULT: ${{ needs.edge-tests.result }}
           WF_RESULT: ${{ needs.workflow-tests.result }}
           SCN_RESULT: ${{ needs.scn-tests.result }}
-          I1_RESULT: ${{ needs.i1-infrastructure-scan.result }}
+          I1_RESULT: ${{ needs.i1-happy-path.result }}
           I2_RESULT: ${{ needs.i2-no-hardcoded-urls.result }}
           I3_RESULT: ${{ needs.i3-config-scan.result }}
           I4_RESULT: ${{ needs.i4-dispatch-targets-cover-refs.result }}
+          I5_RESULT: ${{ needs.i5-infrastructure-scan.result }}
           RUNTIME_JSON: ${{ needs.runtime-env-tests.outputs.results }}
           RUNTIME_RESULT: ${{ needs.runtime-env-tests.result }}
           SCOPE: ${{ inputs.scope || 'all' }}
@@ -819,7 +918,9 @@ jobs:
           # Pins each table row's "source" link to the exact commit of this
           # repo that defined the test, rather than drifting with main.
           SELF_SHA: ${{ github.sha }}
-          PAGES_DIR: _site/${{ env.branch_dir }}
+          PAGES_DIR: _site/${{ env.branch_dir }}/tests
+          SHARED_DIR: _site/${{ env.branch_dir }}
+          SITE_UP: "../"
           LIVENESS_FILE: _site/liveness/ref-liveness.json
           CLEAN_FILE: _site/liveness/cleanliness.json
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
@@ -844,6 +945,23 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/generate-cleanliness-page.sh
 
+      # The hub at the branch root. Generated last so it can restate both child
+      # pages' headlines. The two pages answer different questions -- does
+      # argus behave correctly, and how tidy is the code -- and the hub exists
+      # so neither is read as part of the other's verdict.
+      - name: Generate the branch summary hub
+        env:
+          OUT_DIR: _site/${{ env.branch_dir }}
+          ALL_JSON: ${{ env.ALL_JSON }}
+          CLEAN_FILE: _site/liveness/cleanliness.json
+          LIVENESS_FILE: _site/liveness/ref-liveness.json
+          BRANCH: ${{ env.branch_dir }}
+          ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
+          ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
+          ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/generate-summary-index.sh
+
       # Pages replaces the whole site on every deployment, so publishing only
       # this branch would delete the other one. The other side is a known, small
       # set of files, so pull it back off the live site and republish both. If it
@@ -854,16 +972,17 @@ jobs:
           BRANCH="${GITHUB_REF_NAME}"
           OTHER=$([ "$BRANCH" = "main" ] && echo dev || echo main)
           SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
-          mkdir -p "_site/$OTHER/code-cleanliness"
+          mkdir -p "_site/$OTHER/tests" "_site/$OTHER/code-cleanliness"
           KEPT=0
-          for f in index.html history.json favicon.png code-cleanliness/index.html; do
+          for f in index.html history.json favicon.png \
+                   tests/index.html code-cleanliness/index.html; do
             if curl -sSf "$SITE/$OTHER/$f" -o "_site/$OTHER/$f" 2>/dev/null; then
               KEPT=$((KEPT + 1))
             fi
           done
           # An empty directory would otherwise ship as a 404 that looks like a
           # page that should exist.
-          rmdir "_site/$OTHER/code-cleanliness" 2>/dev/null || true
+          rmdir "_site/$OTHER/tests" "_site/$OTHER/code-cleanliness" 2>/dev/null || true
           if [ "$KEPT" -eq 0 ]; then
             rmdir "_site/$OTHER" 2>/dev/null || true
             echo "::notice::No existing /$OTHER/ site to preserve - it will appear when $OTHER next runs"
@@ -960,11 +1079,27 @@ jobs:
   # `needs: summary` without `if: always()` would skip this whenever the suite
   # failed -- and the suite failing is exactly when the board is worth reading.
   # --------------------------------------------------------------------------
+  # A CANCELLED run must not publish. `summary` and `publish` are both
+  # `if: always()`, which is right for a run that FAILED -- a failing suite is
+  # exactly when the board is worth reading. It is wrong for a cancelled one:
+  # the tests did not fail, they were stopped, and every unfinished job reports
+  # as skipped. Publishing that overwrites a complete board with a partial one
+  # whose missing rows read as "not run", which is indistinguishable from a
+  # suite that genuinely skipped them.
+  #
+  # Observed: two pushes in quick succession cancelled run 35610596763 mid-
+  # flight -- 42 jobs killed by cancel-in-progress and by the next run's
+  # reap-orphans -- and the summary still published 62 of 88 tests as the
+  # current state of main.
   publish:
     name: "Publish dashboard"
     runs-on: ubuntu-latest
     needs: summary
-    if: always() && needs.summary.result != 'skipped' && github.ref_name == 'main'
+    if: >-
+      always() && !cancelled()
+      && needs.summary.result != 'skipped'
+      && needs.summary.outputs.run_complete == 'true'
+      && github.ref_name == 'main'
     permissions:
       contents: read      # checkout is not used here, but download-artifact reads the run
       actions: read       # download-artifact@v4

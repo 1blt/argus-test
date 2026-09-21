@@ -127,7 +127,7 @@ footer { margin-top:44px; padding-top:18px; border-top:1px solid var(--border);
 </head>
 <body>
 <div class="wrap">
-  <a class="back" href="../">&larr; Test results</a>
+  <a class="back" href="../">&larr; Summary</a>
   <h1>Code cleanliness</h1>
   <div class="meta" id="meta"></div>
   <p class="lede" id="lede"></p>
@@ -304,7 +304,8 @@ cat >> "$OUT_DIR/index.html" << 'HTMLEOF2'
   $('foot').innerHTML =
     'Measured on every suite run by <span class="mono">.github/scripts/cleanliness-metrics.sh</span>; ' +
     'thresholds, prose and citations in <span class="mono">.github/data/cleanliness-metrics.json</span>. ' +
-    'Generated ' + esc(PAGE.date) + '. <a href="../">Back to test results</a>.';
+    'Generated ' + esc(PAGE.date) + '. <a href="../">Summary</a> &middot; ' +
+    '<a href="../tests/">Test results</a>.';
 })();
 </script>
 </body>

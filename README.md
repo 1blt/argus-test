@@ -521,13 +521,23 @@ Each branch publishes its own subtree, so `dev` results never overwrite
 argus-test/
 ├── index.html                       root switcher (or a redirect, with one branch)
 ├── main/
-│   ├── index.html                   the dashboard
+│   ├── index.html                   summary hub — grade, ref, liveness, links
 │   ├── history.json                 last 20 runs, for the score chart
+│   ├── favicon.png
+│   ├── tests/
+│   │   └── index.html               the dashboard: every test, searchable
 │   └── code-cleanliness/
 │       └── index.html               KISS/DRY, rationale and citations
 └── dev/
     └── …                            same shape
 ```
+
+The branch root is a **hub**, not a page of its own findings. It carries the
+grade, the ref under test with its liveness split, and one card per child page
+restating that page's headline. The two children answer different questions —
+*does argus behave the way a consumer expects* and *how tidy is the code* — and
+keeping them apart is the point: nothing on the cleanliness page gates
+anything, and a duplication figure is not part of the verdict.
 
 Pages replaces the whole site on every deployment, so the publishing branch
 pulls the other branch's files back off the live site and republishes both —
@@ -646,8 +656,8 @@ argus.
 
 ## Code cleanliness
 
-Its **own page**, at `<branch>/code-cleanliness/`, linked from the dashboard
-header — deliberately not a panel under the verdict. The board answers one
+Its **own page**, at `<branch>/code-cleanliness/`, linked from the summary hub
+and the dashboard header — deliberately not a panel under the verdict. The board answers one
 question, *does argus still behave the way a consumer expects*, and a
 duplication figure sitting beneath it invites the reading that it is part of
 that answer. It isn't: this is **reported and never gated**. A red build

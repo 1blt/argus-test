@@ -40,6 +40,15 @@ inputs:
         .outputs.overall_status != "success" and (.outputs.images_scanned|tonumber) == 1
     required: false
     default: ''
+  assert_outputs_optional:
+    description: >
+      When 'true', a ref that does not declare container-scan.yml's
+      workflow_call outputs downgrades assert_outputs to a warning instead of
+      failing. Only for tests whose PRIMARY assertion is the conclusion and
+      whose output check is an extra -- never for a test that exists to check
+      the outputs, which must fail loudly rather than quietly verify nothing.
+    required: false
+    default: 'false'
   timeout_seconds: { required: false, default: '1800' }
 
 outputs:
@@ -66,6 +75,7 @@ runs:
         GH_REPO: ${{ github.repository }}
         ARGUS_REF: ${{ inputs.argus_ref }}
         ASSERT_OUTPUTS: ${{ inputs.assert_outputs }}
+        ASSERT_OPTIONAL: ${{ inputs.assert_outputs_optional }}
         TEST_ID: ${{ inputs.test_id }}
         EXPECT: ${{ inputs.expect }}
       run: |
@@ -171,6 +181,11 @@ runs:
           jq . "$OUTFILE"
 
           if [ "$(jq -r '.declared' "$OUTFILE")" != "true" ]; then
+            if [ "$ASSERT_OPTIONAL" = "true" ]; then
+              echo "::warning title=$TEST_ID output check skipped::argus@$ARGUS_REF does not declare container-scan.yml workflow_call outputs, so '$ASSERT_OUTPUTS' was not evaluated. The conclusion assertion above still ran and is what this test primarily checks."
+              echo "status=pass" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             fail "$TEST_ID: argus@$ARGUS_REF does not declare container-scan.yml workflow_call outputs, so '$ASSERT_OUTPUTS' cannot be evaluated. This assertion needs a ref carrying argus PR #427 -- $URL"
           fi
 

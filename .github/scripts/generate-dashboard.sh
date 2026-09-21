@@ -20,6 +20,16 @@ set -euo pipefail
 OUT="${PAGES_DIR:?PAGES_DIR not set}"
 mkdir -p "$OUT"
 
+# The dashboard lives at <branch>/tests/, but history.json and favicon.png are
+# shared with the summary hub and the cleanliness page, so they sit one level
+# up at the branch root. SHARED_DIR defaults to OUT so the script still works
+# standalone.
+SHARED_DIR="${SHARED_DIR:-$OUT}"
+mkdir -p "$SHARED_DIR"
+# How the page reaches the shared files and its siblings: '' when the dashboard
+# IS the branch root, '../' when nested under tests/.
+UP="${SITE_UP:-}"
+
 # ---------- safe JSON helper (empty string → []) ----------
 safe_json() {
   if [ -n "$1" ] && echo "$1" | jq empty 2>/dev/null; then
@@ -38,6 +48,7 @@ EDGE_JSON=$(safe_json "${EDGE_JSON:-}")
 WF_JSON=$(safe_json "${WF_JSON:-}")
 SCN_JSON=$(safe_json "${SCN_JSON:-}")
 REGRESSION_JSON=$(safe_json "${REGRESSION_JSON:-}")
+RUNTIME_JSON=$(safe_json "${RUNTIME_JSON:-}")
 RUNTIME_JSON=$(safe_json "${RUNTIME_JSON:-}")
 ALL_JSON=$(safe_json "${ALL_JSON:-}")
 
@@ -59,7 +70,7 @@ fi
 DATE_STR=$(date -u '+%Y-%m-%d %H:%M UTC')
 
 # ---------- history ----------
-HISTORY_FILE="$OUT/history.json"
+HISTORY_FILE="$SHARED_DIR/history.json"
 if [ ! -f "$HISTORY_FILE" ]; then
   echo '[]' > "$HISTORY_FILE"
 fi
@@ -138,6 +149,8 @@ CATEGORIES=$(jq -n -c \
   --arg i2s "$(cat_status "$I2_RESULT")" \
   --arg i3s "$(cat_status "$I3_RESULT")" \
   --arg i4s "$(cat_status "${I4_RESULT:-skipped}")" \
+  --arg i5s "$(cat_status "${I5_RESULT:-skipped}")" \
+  --arg i4s "$(cat_status "${I4_RESULT:-skipped}")" \
   --argjson u "$UNIT_JSON" \
   --argjson a "$ACTIONS_JSON" \
   --argjson r "$REMOTE_JSON" \
@@ -159,10 +172,11 @@ CATEGORIES=$(jq -n -c \
     {name:"Edge & Adversarial", status:$es, tests:$ed},
     {name:"Top-level Workflow Tests", status:$ws, tests:$wf},
     {name:"SCN Detector Tests",status:$ss, tests:$sc},
-    {name:"Infrastructure Scan (I1)",   status:$i1s,tests:[$ig[0]]},
+    {name:"Happy Path (I1)",            status:$i1s,tests:[$ig[0]]},
     {name:"No Hardcoded URLs (I2)",     status:$i2s,tests:[$ig[1]]},
     {name:"Config-Driven Scan (I3)",    status:$i3s,tests:[$ig[2]]},
-    {name:"Dispatch Targets (I4)",      status:$i4s,tests:[$ig[3]]}
+    {name:"Dispatch Targets (I4)",      status:$i4s,tests:[$ig[3]]},
+    {name:"Infrastructure Scan (I5)",   status:$i5s,tests:[$ig[4]]}
   ]
   # Indexing a short REGRESSION_JSON yields nulls, which reach the browser as
   # `null` entries and throw on the first property access -- the whole board
@@ -315,8 +329,8 @@ cat > "$OUT/index.html" << 'HTMLEOF'
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Argus Test Suite</title>
-<link rel="icon" type="image/png" href="favicon.png">
-<link rel="apple-touch-icon" href="favicon.png">
+<link rel="icon" type="image/png" href="__UP__favicon.png">
+<link rel="apple-touch-icon" href="__UP__favicon.png">
 <style>
 /* Bootswatch Lux-flavoured: Nunito Sans, near-black primary, hairline borders,
    square corners, uppercase letter-spaced labels, generous whitespace.
@@ -693,6 +707,16 @@ mark { background: rgba(240,173,78,0.28); color: inherit; padding: 0 2px; }
         font-weight:600; letter-spacing:0.04em; text-transform:uppercase; white-space:nowrap; cursor:help; }
 .chip-warn { color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn); }
 .chip-ok   { color: var(--pass-ink); background: var(--pass-bg); border-color: var(--pass); }
+/* Deep-linking to a row put it under the sticky table header: the browser
+   scrolls the anchor to y=0 and the header then sits on top of it. This is
+   what scroll-margin-top is for -- no JS, and it fixes keyboard navigation and
+   a reload on an existing #hash at the same time. Applied to any element that
+   can be a link target. */
+tr[id], [id^="ref-"], [id^="cite-"], section[id] { scroll-margin-top: 92px; }
+/* A brief tint so the reader can see WHICH row they landed on, since the row
+   is no longer at the very top of the viewport. */
+:target > td { animation: land 1.4s ease-out 1; }
+@keyframes land { from { background: var(--warn-bg); } to { background: transparent; } }
 footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--fg3); }
 
 /* theme toggle */
@@ -861,7 +885,7 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
   meta.push(esc(d.date));
   meta.push('scope <span class="mono">' + esc(d.scope) + '</span>');
   if (d.cleanliness) {
-    meta.push('<a href="code-cleanliness/">code cleanliness</a>');
+    meta.push('<a href="__UP__code-cleanliness/">code cleanliness</a>');
   }
   meta.push('<a href="' + d.runUrl + '">view run &#8599;</a>');
   $('head-meta').innerHTML = meta.join('<span class="sep">&middot;</span>');
@@ -965,7 +989,7 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
   // Weights come from .github/data/failure-classes.json and rank a control that
   // fails OPEN above one that fails CLOSED, because only the first lies to you.
   const FC = d.failureClasses || null;
-  const W = (FC && FC.weights) || { open: 10, closed: 3, degraded: 1 };
+  const W = (FC && FC.weights) || { open: 10, degraded: 6, closed: 3, auxiliary: 1 };
   const CLASS_OF = {};
   if (FC && FC.classes) {
     Object.keys(FC.classes).forEach(function (k) {
@@ -976,7 +1000,8 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
   function failClass(x) { return CLASS_OF[x.id] || DEFAULT_CLASS; }
 
   const failing = tests.filter(function (x) { return x.status === 'FAIL'; });
-  const byClass = { open: [], closed: [], degraded: [] };
+  const byClass = {};
+  Object.keys(W).forEach(function (k) { byClass[k] = []; });
   failing.forEach(function (x) {
     const c = failClass(x);
     (byClass[c] = byClass[c] || []).push(x);
@@ -984,8 +1009,15 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
   var risk = 0;
   Object.keys(byClass).forEach(function (c) { risk += (W[c] || 0) * byClass[c].length; });
 
-  const ORDER = ['open', 'closed', 'degraded'];
-  const LBL = (FC && FC.labels) || { open: 'fail-open', closed: 'fail-closed', degraded: 'degraded' };
+  // Severity order is DERIVED from the weights, descending, so a class added
+  // or renamed in failure-classes.json cannot be left unranked here. It was a
+  // hardcoded ['open','closed','degraded'] until 'auxiliary' was added, at
+  // which point a run whose only failures were auxiliary computed worst='none'
+  // and the board reported PASS with tests failing -- the exact silent pass
+  // this suite exists to catch, in the thing that reports it.
+  const ORDER = Object.keys(W).sort(function (a, b) { return (W[b] || 0) - (W[a] || 0); });
+  const LBL = (FC && FC.labels) || { open: 'fail-open', closed: 'fail-closed',
+                                     degraded: 'degraded scan', auxiliary: 'auxiliary breakage' };
   const SHORT = (FC && FC.short) || LBL;
   const GLOSS = (FC && FC.glossary) || {};
   const REFS = (FC && FC.references) || [];
@@ -993,7 +1025,8 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
   const STATUS = (FC && FC.status) || {
     open: { word: 'FAIL', tone: 'bad', line: 'tests report success without scanning' },
     closed: { word: 'FAIL', tone: 'bad', line: 'argus refuses to run where it should work' },
-    degraded: { word: 'FAIL', tone: 'warn', line: 'an auxiliary path is broken' },
+    degraded: { word: 'FAIL', tone: 'bad', line: 'a scan ran with fewer sub-scanners than were asked for' },
+    auxiliary: { word: 'FAIL', tone: 'warn', line: 'an auxiliary path is broken; scans and gates still work' },
     none: { word: 'PASS', tone: 'good', line: 'every defined test that ran, passed' }
   };
 
@@ -1085,12 +1118,16 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
       : (diff > 0 ? '\u25b2 +' : '\u25bc ') + diff + ' pts vs last run';
   }
 
-  const STAT_DEFS = [
-    { key: 'not-run', cls: 'idle', label: 'not run', n: nIdle },
-    { key: 'fail-open', cls: 'fail', label: SHORT.open || 'reports success', n: (byClass.open || []).length },
-    { key: 'fail-closed', cls: 'fail', label: SHORT.closed || 'blocks', n: (byClass.closed || []).length },
-    { key: 'degraded', cls: 'warn', label: SHORT.degraded || 'degraded', n: (byClass.degraded || []).length }
-  ];
+  // One chip per class, in severity order, so a class added to
+  // failure-classes.json appears without editing this list.
+  const FILTER_KEY = { open: 'fail-open', closed: 'fail-closed' };
+  const STAT_DEFS = [{ key: 'not-run', cls: 'idle', label: 'not run', n: nIdle }].concat(
+    ORDER.map(function (c) {
+      return { key: FILTER_KEY[c] || c,
+               cls: (c === 'auxiliary' ? 'warn' : 'fail'),
+               label: SHORT[c] || LBL[c] || c,
+               n: (byClass[c] || []).length };
+    }));
   const statsEl = $('stats');
   STAT_DEFS.forEach(function (s) {
     if (s.n === 0 && s.key !== 'all') return;
@@ -1743,7 +1780,8 @@ cat >> "$OUT/index.html" << 'HTMLEOF2'
     '<div class="foot-meta">Generated by the test suite CI on every push. ' +
     'Weights live in <span class="mono">.github/data/failure-classes.json</span>; ' +
     'coverage gaps in <span class="mono">.github/data/coverage-gaps.json</span>; ' +
-    'cleanliness metrics on their <a href="code-cleanliness/">own page</a>, ' +
+    '<a href="__UP__">back to the summary</a>. ' +
+    'cleanliness metrics on their <a href="__UP__code-cleanliness/">own page</a>, ' +
     'configured in <span class="mono">.github/data/cleanliness-metrics.json</span>.</div>';
 
   // Theme: follow the OS by default, let the reader override, remember it.
@@ -1778,13 +1816,17 @@ HTMLEOF2
 # argus's eye as the site icon, copied next to the page so it needs no network
 FAVICON_SRC="$SCRIPT_DIR/../data/argus-favicon.png"
 if [ -f "$FAVICON_SRC" ]; then
-  cp "$FAVICON_SRC" "$OUT/favicon.png"
+  cp "$FAVICON_SRC" "$SHARED_DIR/favicon.png"
 else
   echo "WARNING: $FAVICON_SRC missing - the page will fall back to no icon"
 fi
 
 # .nojekyll
-touch "$OUT/.nojekyll"
+touch "$SHARED_DIR/.nojekyll"
+
+# Resolve the relative-path placeholder as a post-pass, so the HTML heredocs
+# above stay literal and greppable.
+sed -i.bak "s|__UP__|${UP}|g" "$OUT/index.html" && rm -f "$OUT/index.html.bak"
 
 echo "Dashboard generated: $OUT/index.html"
 echo "History entries: $(jq 'length' "$HISTORY_FILE")"
