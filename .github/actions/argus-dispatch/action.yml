@@ -96,10 +96,20 @@ runs:
           > /tmp/dispatch-inputs.json
         cat /tmp/dispatch-inputs.json
 
-        if ! gh workflow run "$WF" --ref "$GITHUB_REF_NAME" --json < /tmp/dispatch-inputs.json 2>/tmp/dispatch-err; then
-          # Report what gh actually said. The previous message asserted a cause
-          # (default branch / permissions) and hid the real one.
-          fail "Could not dispatch $WF: $(tr '\n' ' ' < /tmp/dispatch-err). Check that it exists on the DEFAULT branch, that this job has actions: write, and that every input value is a string."
+        # Same retry as argus-scan: concurrent suite runs can exceed GitHub's
+        # secondary rate limit, and a single attempt turns a throttle into a
+        # red test that reads as an argus regression.
+        DISPATCHED=false
+        for attempt in 1 2 3 4 5; do
+          if gh workflow run "$WF" --ref "$GITHUB_REF_NAME" --json < /tmp/dispatch-inputs.json 2>/tmp/dispatch-err; then
+            DISPATCHED=true
+            break
+          fi
+          echo "::warning::dispatch attempt $attempt failed: $(tr '\n' ' ' < /tmp/dispatch-err | cut -c1-400)"
+          sleep $(( attempt * 15 + RANDOM % 10 ))
+        done
+        if [ "$DISPATCHED" != "true" ]; then
+          fail "Could not dispatch $WF after 5 attempts. Last error from gh: $(tr '\n' ' ' < /tmp/dispatch-err). Check that it exists on the DEFAULT branch, that this job has actions: write, and that every input value is a string."
         fi
 
         RID=""

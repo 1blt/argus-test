@@ -109,7 +109,7 @@ jobs:
     needs: e1-resolve-digest
     strategy:
       fail-fast: false
-      max-parallel: ${{ inputs.max_parallel || 4 }}
+      max-parallel: ${{ inputs.max_parallel || 3 }}
       matrix:
         t:
           - { id: E1,  name: "digest-pinned image",        expect: success, image: "nginx@${{ needs.e1-resolve-digest.outputs.digest }}", cname: "e1-digest-pinned",    scanners: "trivy",              sev: none, user: "" }

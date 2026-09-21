@@ -36,9 +36,19 @@ on:
     # Weekly Sunday 9am UTC
     - cron: '0 9 * * 0'
 
+# Per-ref, so a push supersedes only its own branch's run.
 concurrency:
   group: test-suite-${{ github.ref }}
   cancel-in-progress: true
+
+# NOTE ON CONCURRENT BRANCHES. Each run fires roughly forty workflow_dispatch
+# calls and then polls for each child. Two branches running at once produced
+# ~80 dispatches in a few minutes and GitHub's secondary rate limit rejected
+# most of them: 48 tests went red with "Could not dispatch", which reads as an
+# argus regression and is not one. The dispatch actions retry with jittered
+# backoff now, and max-parallel is lowered below, but the honest position is
+# that this suite is heavy on the Actions API and two simultaneous full runs
+# are close to its ceiling.
 
 permissions:
   contents: read

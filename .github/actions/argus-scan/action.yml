@@ -109,20 +109,45 @@ runs:
         MARKER="${TEST_ID}-${BRANCH_SLUG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
         echo "marker: $MARKER   argus_ref: $ARGUS_REF"
 
-        if ! gh workflow run argus-run.yml --ref "$GITHUB_REF_NAME" \
-              -f marker="$MARKER" \
-              -f argus_ref="$ARGUS_REF" \
-              -f scan_mode='${{ inputs.scan_mode }}' \
-              -f image_ref='${{ inputs.image_ref }}' \
-              -f container_name='${{ inputs.container_name }}' \
-              -f registry_username='${{ inputs.registry_username }}' \
-              -f scanners='${{ inputs.scanners }}' \
-              -f fail_on_severity='${{ inputs.fail_on_severity }}' \
-              -f allow_failure='${{ inputs.allow_failure }}' \
-              -f search_paths='${{ inputs.search_paths }}' \
-              -f platform='${{ inputs.platform }}' \
-              -f fail_on_no_targets='${{ inputs.fail_on_no_targets }}'; then
-          fail "Could not dispatch argus-run.yml. It must exist on the DEFAULT branch to be dispatchable, and the job needs actions: write."
+        # RETRY, AND REPORT WHAT gh ACTUALLY SAID.
+        #
+        # The old message asserted a cause -- "it must exist on the default
+        # branch, and the job needs actions: write" -- and discarded gh's
+        # stderr. argus-dispatch was fixed for exactly this months ago and this
+        # copy was missed, so when 48 dispatches failed at once the log said
+        # nothing about why. Never assert a cause you did not read.
+        #
+        # The retry is not decoration. Two suite runs on different branches
+        # fire ~80 workflow_dispatch calls in a few minutes, and GitHub's
+        # secondary rate limit rejects the excess. A single attempt turns a
+        # throttle into 48 red tests that look like argus regressions.
+        DISPATCHED=false
+        for attempt in 1 2 3 4 5; do
+          if gh workflow run argus-run.yml --ref "$GITHUB_REF_NAME" \
+                -f marker="$MARKER" \
+                -f argus_ref="$ARGUS_REF" \
+                -f scan_mode='${{ inputs.scan_mode }}' \
+                -f image_ref='${{ inputs.image_ref }}' \
+                -f container_name='${{ inputs.container_name }}' \
+                -f registry_username='${{ inputs.registry_username }}' \
+                -f scanners='${{ inputs.scanners }}' \
+                -f fail_on_severity='${{ inputs.fail_on_severity }}' \
+                -f allow_failure='${{ inputs.allow_failure }}' \
+                -f search_paths='${{ inputs.search_paths }}' \
+                -f platform='${{ inputs.platform }}' \
+                -f fail_on_no_targets='${{ inputs.fail_on_no_targets }}' 2>/tmp/dispatch-err; then
+            DISPATCHED=true
+            break
+          fi
+          ERR=$(tr '\n' ' ' < /tmp/dispatch-err | cut -c1-400)
+          echo "::warning::dispatch attempt $attempt failed: $ERR"
+          # Backoff with jitter, so a whole matrix does not retry in lockstep
+          # and reproduce the burst that caused the throttle.
+          sleep $(( attempt * 15 + RANDOM % 10 ))
+        done
+
+        if [ "$DISPATCHED" != "true" ]; then
+          fail "$TEST_ID: could not dispatch argus-run.yml after 5 attempts. Last error from gh: $(tr '\n' ' ' < /tmp/dispatch-err | cut -c1-400)"
         fi
 
         # The dispatch API returns no run id, so find the child by its run-name.
