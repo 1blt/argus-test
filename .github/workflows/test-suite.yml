@@ -1084,7 +1084,21 @@ jobs:
               # domain's 301 body gets written into the file and counted as a
               # successful preserve, which is how /dev/ became a 162-byte
               # "301 Moved Permanently" stub that still rendered on the index.
-              curl -sSfL "$site_url/$SLUG/$f" -o "_site/$SLUG/$f" 2>/dev/null && GOT=$((GOT + 1))
+              curl -sSfL "$site_url/$SLUG/$f" -o "_site/$SLUG/$f" 2>/dev/null || continue
+              # -L stopped NEW stubs, but one already published is a real file
+              # served 200, so each deploy fetched it and carried it forward:
+              # /dev/ stayed a "301 Moved Permanently" page for every file long
+              # after the fix. Check what came back, not just that something did.
+              case "$f" in
+                *.json) jq empty "_site/$SLUG/$f" 2>/dev/null || BAD=1 ;;
+                *.html) grep -qiE '<title>[[:space:]]*30[1278] ' "_site/$SLUG/$f" && BAD=1 ;;
+                *.png)  [ "$(head -c 4 "_site/$SLUG/$f" | od -An -tx1 | tr -d ' \n')" = "89504e47" ] || BAD=1 ;;
+              esac
+              if [ "${BAD:-0}" = 1 ]; then
+                echo "  $SLUG/$f: not a real page (redirect stub or unparseable) -- dropped"
+                rm -f "_site/$SLUG/$f"; BAD=0; continue
+              fi
+              GOT=$((GOT + 1))
             done
             rmdir "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness" 2>/dev/null || true
             if [ "$GOT" -eq 0 ]; then
