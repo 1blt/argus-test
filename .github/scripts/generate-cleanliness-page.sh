@@ -93,6 +93,7 @@ __NAV_CSS__
   --border:#dee2e6; --rule:#ebedef;
   --pass:#4bbf73; --pass-bg:#edf9f1; --pass-ink:#2f8f52;
   --warn:#f0ad4e; --warn-bg:#fef7ec; --warn-ink:#a3701f;
+  --fail:#d9534f; --fail-bg:#fdefee; --fail-ink:#b8413d;
   --track:0.08em;
 }
 @media (prefers-color-scheme: dark) {
@@ -102,6 +103,7 @@ __NAV_CSS__
     --border:#282d32; --rule:#1e2226;
     --pass:#4bbf73; --pass-bg:#16241b; --pass-ink:#79d199;
     --warn:#f0ad4e; --warn-bg:#2a2116; --warn-ink:#e0b271;
+    --fail:#e06c69; --fail-bg:#281618; --fail-ink:#ef918e;
   }
 }
 :root[data-theme="dark"] {
@@ -110,6 +112,7 @@ __NAV_CSS__
   --border:#282d32; --rule:#1e2226;
   --pass:#4bbf73; --pass-bg:#16241b; --pass-ink:#79d199;
   --warn:#f0ad4e; --warn-bg:#2a2116; --warn-ink:#e0b271;
+  --fail:#e06c69; --fail-bg:#281618; --fail-ink:#ef918e;
 }
 * { box-sizing:border-box; }
 body { font-family:"Nunito Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -248,7 +251,10 @@ td.k { color:var(--fg); font-weight:600; white-space:nowrap; }
                                  font-size:0.64rem; color:var(--fg3); }
 .trend-head .cite { text-transform:none; letter-spacing:0; font-weight:400; text-decoration:none; }
 .trend-head .cite:hover { text-decoration:underline; }
-.trend-delta { font-size:0.68rem; color:var(--fg3); font-variant-numeric:tabular-nums; }
+.trend-delta { font-size:0.68rem; font-variant-numeric:tabular-nums; }
+.trend-delta.same { color:var(--fg); }
+.trend-delta.better { color:var(--pass-ink); }
+.trend-delta.worse { color:var(--fail-ink); }
 .trend-svg { width:100%; height:92px; display:block; overflow:visible; }
 .ax-grid { stroke:var(--rule); stroke-width:1; }
 .ax-lbl { font-size:9px; fill:var(--fg3); font-family:inherit; letter-spacing:0.04em; }
@@ -385,24 +391,36 @@ __NAV_JS__
   function valOf(p, key, m) { var t = p[key]; return t && typeof t[m] === 'number' ? t[m] : null; }
   function fmt(v, m) { return m === 'duplication' ? v.toFixed(1) : String(v); }
 
-  // The delta is against the previous run that measured this metric, and
-  // says how far back that was when it is not the previous run.
-  function delta(key, m, unit) {
+  // The change against the previous run that measured this metric, as a
+  // percentage of that run's value so every metric reads the same way, and
+  // coloured by what it means: all three are lower-is-better, so a fall is
+  // green and a rise is red. A change that rounds to 0% is neutral. From 0 a
+  // percentage is undefined, so that case gives the absolute change.
+  function delta(key, m) {
     var got = [];
     for (var i = HIST.length - 1; i >= 0 && got.length < 2; i--) {
       var v = valOf(HIST[i], key, m);
       if (v !== null) got.push({ v: v, i: i });
     }
-    if (valOf(HIST[HIST.length - 1] || {}, key, m) === null || got.length < 2) return '';
-    var d = got[0].v - got[1].v, back = got[0].i - got[1].i;
-    var s = d === 0 ? 'no change' : (d > 0 ? '+' : '−') + fmt(Math.abs(d), m) + unit;
-    return s + (back > 1 ? ' vs ' + back + ' runs ago' : ' vs last run');
+    if (valOf(HIST[HIST.length - 1] || {}, key, m) === null || got.length < 2) return null;
+    var cur = got[0].v, prev = got[1].v, back = got[0].i - got[1].i;
+    var vs = back > 1 ? ' vs ' + back + ' runs ago' : ' vs last run';
+    var sign = function (x) { return x > 0 ? '+' : (x < 0 ? '−' : ''); };
+    if (prev === 0 && cur !== 0) {
+      return { cls: 'worse', text: '+' + fmt(cur, m) + vs };
+    }
+    if (prev === 0) return { cls: 'same', text: '0% change' + vs };
+    var pct = Math.round((cur - prev) / prev * 1000) / 10;
+    return { cls: pct > 0 ? 'worse' : (pct < 0 ? 'better' : 'same'),
+             text: sign(pct) + String(Math.abs(pct)) + '% change' + vs };
   }
 
   function trendRow(key) {
     return '<div class="trends">' + TRENDS[key].map(function (t) {
       return '<div><div class="trend-head"><span>' + esc(t[1]) + cite(t[0]) + '</span>' +
-             '<span class="trend-delta">' + esc(delta(key, t[0], t[2])) + '</span></div>' +
+             (function (d) {
+               return d ? '<span class="trend-delta ' + d.cls + '">' + esc(d.text) + '</span>' : '';
+             })(delta(key, t[0])) + '</div>' +
              '<svg class="trend-svg" data-t="' + key + '" data-m="' + t[0] + '"></svg></div>';
     }).join('') + '</div>';
   }
