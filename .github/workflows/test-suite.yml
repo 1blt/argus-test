@@ -431,6 +431,25 @@ jobs:
           exit "$RC"
 
   # ==========================================================================
+  # I6: no two matrix rows describe the same test
+  #
+  # A row identical to another once id and name are stripped is one test
+  # counted twice: it adds nothing and inflates the pass-rate denominator. PR
+  # #13 removed six by hand. A deliberate same-invocation pair is annotated
+  # with `# dry:allow <reason>` above the row. Like I4, this checks the suite
+  # rather than argus, and it fails closed: finding no rows at all is a failure.
+  # ==========================================================================
+  i6-no-duplicate-tests:
+    name: "I6: no duplicate test tuples"
+    if: inputs.scope == 'all' || inputs.scope == 'regression' || github.event_name == 'schedule' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: No two matrix rows are the same test
+        run: python3 .github/scripts/check-duplicate-tuples.py .github/workflows
+
+  # ==========================================================================
   # I3: Config-driven container scan regression
   # ==========================================================================
   i3-config-scan:
@@ -475,6 +494,7 @@ jobs:
       - i3-config-scan
       - i1-happy-path
       - i4-dispatch-targets-cover-refs
+      - i6-no-duplicate-tests
       - runtime-env-tests
     if: always()
     # No `environment:` here. The github-pages environment restricts deployment
@@ -501,9 +521,10 @@ jobs:
           R12: ${{ needs.i3-config-scan.result }}
           R13: ${{ needs.i4-dispatch-targets-cover-refs.result }}
           R14: ${{ needs.i5-infrastructure-scan.result }}
+          R15: ${{ needs.i6-no-duplicate-tests.result }}
         run: |
           set -uo pipefail
-          ALL="$R1 $R2 $R3 $R4 $R5 $R6 $R7 $R8 $R9 $R10 $R11 $R12 $R13 $R14"
+          ALL="$R1 $R2 $R3 $R4 $R5 $R6 $R7 $R8 $R9 $R10 $R11 $R12 $R13 $R14 $R15"
           echo "category results: $ALL"
           if printf '%s' "$ALL" | grep -qw "cancelled"; then
             echo "complete=false" >> "$GITHUB_OUTPUT"
@@ -537,6 +558,7 @@ jobs:
           I3: ${{ needs.i3-config-scan.result }}
           I4: ${{ needs.i4-dispatch-targets-cover-refs.result }}
           I5: ${{ needs.i5-infrastructure-scan.result }}
+          I6: ${{ needs.i6-no-duplicate-tests.result }}
           SCOPE: ${{ inputs.scope || 'all' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -585,18 +607,21 @@ jobs:
           I3_STATUS=$(to_status "$I3")
           I4_STATUS=$(to_status "$I4")
           I5_STATUS=$(to_status "$I5")
+          I6_STATUS=$(to_status "$I6")
           REGRESSION_ARR=$(jq -n -c \
             --arg i1 "$I1_STATUS" \
             --arg i2 "$I2_STATUS" \
             --arg i3 "$I3_STATUS" \
             --arg i4 "$I4_STATUS" \
             --arg i5 "$I5_STATUS" \
+            --arg i6 "$I6_STATUS" \
             '[
               {"id":"I1","name":"happy path","detail":"Does argus work for a happy path workflow? The ordinary documented use with nothing adversarial in it: a clean image, the default scanner set and a realistic severity gate. Green only counts if an image was actually scanned, so it also requires images_scanned of at least 1 and an overall_status of success.","status":$i1},
               {"id":"I2","name":"no hardcoded URLs","detail":"Are the container action shell scripts still free of hardcoded github.com URLs?","status":$i2},
               {"id":"I3","name":"config-driven scan","detail":"Does the container-scan-from-config reusable workflow still scan the containers named in a config file?","status":$i3},
               {"id":"I4","name":"dispatch targets cover every ref","detail":"Does every argus ref this suite can be pointed at have a matching job in all four dispatch targets, so a run cannot report a pass for a ref nothing called?","status":$i4},
-              {"id":"I5","name":"infrastructure-scan regression","detail":"Does the infrastructure-scan reusable workflow still complete a trivy-iac and checkov run?","status":$i5}
+              {"id":"I5","name":"infrastructure-scan regression","detail":"Does the infrastructure-scan reusable workflow still complete a trivy-iac and checkov run?","status":$i5},
+              {"id":"I6","name":"no duplicate test tuples","detail":"Is every matrix row a distinct test, so none is counted twice in the pass rate? Rows identical once id and name are removed fail unless annotated with a dry:allow reason.","status":$i6}
             ]')
 
           # Merge all into one array
@@ -686,6 +711,7 @@ jobs:
             echo "| $(cat_icon "$I3") | Config-Driven Scan (I3) | 1 | $([ "$I3_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo "| $(cat_icon "$I4") | Dispatch Targets (I4) | 1 | $([ "$I4_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo "| $(cat_icon "$I5") | Infrastructure Scan (I5) | 1 | $([ "$I5_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
+            echo "| $(cat_icon "$I6") | No Duplicate Tests (I6) | 1 | $([ "$I6_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo ""
             echo "---"
             echo ""
@@ -790,9 +816,10 @@ jobs:
           I1: ${{ needs.i1-happy-path.result }}
           I2: ${{ needs.i2-no-hardcoded-urls.result }}
           I3: ${{ needs.i3-config-scan.result }}
+          I6: ${{ needs.i6-no-duplicate-tests.result }}
         run: |
           FAILED=0
-          for result in "$UNIT" "$ACTIONS" "$REMOTE" "$DISCOVER" "$COMBO" "$EDGE" "$WF" "$SCN" "$I1" "$I2" "$I3"; do
+          for result in "$UNIT" "$ACTIONS" "$REMOTE" "$DISCOVER" "$COMBO" "$EDGE" "$WF" "$SCN" "$I1" "$I2" "$I3" "$I6"; do
             [ "$result" = "failure" ] && FAILED=$((FAILED + 1))
           done
 
@@ -884,11 +911,6 @@ jobs:
           curl -sSfL "$site_url/$SLUG/history.json" -o "_site/$SLUG/history.json" 2>/dev/null \
             || echo '[]' > "_site/$SLUG/history.json"
           jq empty "_site/$SLUG/history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/history.json"
-          # The cleanliness page's history, same rules. generate-cleanliness-page.sh
-          # appends this run to it.
-          curl -sSfL "$site_url/$SLUG/cleanliness-history.json" -o "_site/$SLUG/cleanliness-history.json" 2>/dev/null \
-            || echo '[]' > "_site/$SLUG/cleanliness-history.json"
-          jq empty "_site/$SLUG/cleanliness-history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/cleanliness-history.json"
           {
             echo "branch_dir=$SLUG"
             echo "branch_slug=$SLUG"
@@ -921,19 +943,6 @@ jobs:
           mkdir -p _site/liveness
           bash .github/scripts/audit-ref-liveness.sh \
             "${{ inputs.argus_ref || 'main' }}" _site/liveness/ref-liveness.json
-
-      # KISS/DRY metrics. Report-only: this step never fails the job, because a
-      # red build has to mean argus broke.
-      - name: Measure code cleanliness
-        continue-on-error: true
-        run: |
-          mkdir -p _site/liveness
-          git clone --depth 1 --quiet \
-            --branch "${{ inputs.argus_ref || 'main' }}" \
-            https://github.com/huntridge-labs/argus.git /tmp/argus-clean 2>/dev/null \
-            || echo "::notice::Could not check out argus for cleanliness metrics; that panel will read 'not measured'."
-          bash .github/scripts/cleanliness-metrics.sh \
-            _site/liveness/cleanliness.json /tmp/argus-clean || true
 
       # Per-job log URLs so the dashboard's Logs column points at the job that ran
       # each test rather than repeating the run URL on every row. conclusion and
@@ -989,6 +998,7 @@ jobs:
           I3_RESULT: ${{ needs.i3-config-scan.result }}
           I4_RESULT: ${{ needs.i4-dispatch-targets-cover-refs.result }}
           I5_RESULT: ${{ needs.i5-infrastructure-scan.result }}
+          I6_RESULT: ${{ needs.i6-no-duplicate-tests.result }}
           RUNTIME_JSON: ${{ needs.runtime-env-tests.outputs.results }}
           RUNTIME_RESULT: ${{ needs.runtime-env-tests.result }}
           SCOPE: ${{ inputs.scope || 'all' }}
@@ -1005,35 +1015,12 @@ jobs:
           SHARED_DIR: _site/${{ env.branch_dir }}
           SITE_UP: "../"
           LIVENESS_FILE: _site/liveness/ref-liveness.json
-          CLEAN_FILE: _site/liveness/cleanliness.json
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
           ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
           ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
           ARGUS_SHA_SHORT: ${{ steps.argus-ref.outputs.argus_sha_short }}
           ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
         run: bash .github/scripts/generate-dashboard.sh
-
-      # Cleanliness lives on its own page, not under the verdict. The board
-      # answers "does argus still behave as a consumer expects"; a duplication
-      # figure beneath it invites the reading that it is part of that answer.
-      # Report-only, so this never fails the job.
-      - name: Generate the code-cleanliness page
-        continue-on-error: true
-        env:
-          CLEAN_FILE: _site/liveness/cleanliness.json
-          OUT_DIR: _site/${{ env.branch_dir }}/code-cleanliness
-          CLEAN_HISTORY_FILE: _site/${{ env.branch_dir }}/cleanliness-history.json
-          BRANCH: ${{ env.branch_name }}
-          ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
-          ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
-          ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
-          ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
-          SELF_REPO: ${{ github.repository }}
-          SELF_SHA: ${{ github.sha }}
-          BRANCH_SLUG: ${{ env.branch_slug }}
-          BRANCHES_JSON: ${{ env.BRANCHES_JSON }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash .github/scripts/generate-cleanliness-page.sh
 
       # Pages replaces the WHOLE site on every deployment, so a branch that
       # publishes must carry every other branch's pages with it or it deletes
@@ -1076,10 +1063,9 @@ jobs:
           KEPT=0
           for SLUG in $(jq -r '.[].slug' /tmp/branches.json); do
             [ "$SLUG" = "$MINE" ] && continue
-            mkdir -p "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness"
+            mkdir -p "_site/$SLUG/tests"
             GOT=0
-            for f in index.html history.json cleanliness.json cleanliness-history.json favicon.png \
-                     tests/index.html code-cleanliness/index.html; do
+            for f in index.html history.json favicon.png tests/index.html; do
               # -L for the same reason as everywhere else: without it a custom
               # domain's 301 body gets written into the file and counted as a
               # successful preserve, which is how /dev/ became a 162-byte
@@ -1100,7 +1086,7 @@ jobs:
               fi
               GOT=$((GOT + 1))
             done
-            rmdir "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness" 2>/dev/null || true
+            rmdir "_site/$SLUG/tests" 2>/dev/null || true
             if [ "$GOT" -eq 0 ]; then
               rm -rf "_site/$SLUG"
               echo "  $SLUG: nothing live to preserve"
@@ -1131,17 +1117,6 @@ jobs:
             printf '%s\n' '<body><p>Redirecting to <a href="tests/">test results</a>.</p></body></html>'
           } > "$D/index.html"
           echo "Wrote $D/index.html -> tests/"
-
-      # cleanliness.json follows its branch into the published site. The root
-      # index reads each branch's copy to show that branch's figures, exactly
-      # as it reads history.json -- staging is deleted below, so anything the
-      # root needs has to be moved out of it first.
-      - name: Keep the cleanliness figures with the branch
-        run: |
-          if [ -f _site/liveness/cleanliness.json ]; then
-            cp _site/liveness/cleanliness.json "_site/${{ env.branch_dir }}/cleanliness.json"
-            echo "Kept cleanliness.json for ${{ env.branch_dir }}"
-          fi
 
       # The site root: one card per published branch, with that branch's
       # headline figures. Read from each <branch>/history.json rather than

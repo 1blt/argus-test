@@ -491,9 +491,12 @@ what a hardened runner looks like to it — an induced condition, not a mock.
 
 | # | Test | Validates |
 |---|------|-----------|
-| I1 | infrastructure-scan | trivy-iac + checkov still work |
+| I1 | happy path | The ordinary documented use -- clean image, default scanners, a realistic gate -- scans at least one image and succeeds |
 | I2 | no-hardcoded-urls | No github.com URLs in action shell scripts |
 | I3 | config-driven-scan | container-scan-from-config.yml reusable workflow still works |
+| I4 | dispatch targets cover every ref | Every ref in `argus-refs.json` has a job in all four dispatch targets |
+| I5 | infrastructure-scan | trivy-iac + checkov still work |
+| I6 | no duplicate test tuples | No two matrix rows are the same test (see [Duplicate tests](#duplicate-tests-i6)) |
 
 ## Quick Start
 
@@ -550,39 +553,27 @@ Each branch publishes its own subtree, so `dev` results never overwrite
 
 ```
 argus-test/
-├── index.html                       the index: every branch, with a
-│                                    Tests / Code cleanliness toggle
+├── index.html                       the index: every branch and its figures
 ├── branches.json                    manifest; a publishing branch reads it to
 │                                    know which other branches to carry along
 ├── main/
 │   ├── index.html                   redirect -> tests/
 │   ├── history.json                 last 20 runs, for the score chart
-│   ├── cleanliness.json             figures the index reads
 │   ├── favicon.png
-│   ├── tests/index.html             the board: every test, searchable
-│   └── code-cleanliness/index.html  KISS/DRY, evidence and citations
+│   └── tests/index.html             the board: every test, searchable
 └── feat-some-branch/
     └── …                            same shape, published at its slug
 ```
-
-**Two hierarchies, one index.** A branch has two pages answering different
-questions, so the toggle switches what the whole list is about: the same
-branches, different figures, a different destination. Listing every branch
-twice down one page would grow with the branch count and repeat every name.
 
 There is **no per-branch hub**. It restated the figures already on the index
 card and cost a click to reach the page the reader wanted, so `/<branch>/`
 redirects to the board. Kept as a redirect rather than removed so trimming a
 URL back a level, or an old bookmark, still lands somewhere useful.
 
-Cleanliness is **not** folded into the test page. It is the one thing on the
-site that gates nothing, and putting a duplication percentage beside the risk
-index makes it read as part of the verdict on whether argus works.
-
-Every page carries a breadcrumb back to the index, tabs between the two pages,
-and a switcher to the same view on another branch. Figures on the index are
-read from each branch's published `history.json` and `cleanliness.json` rather
-than recomputed, so it cannot disagree with the pages it links to.
+The board carries a breadcrumb back to the index and a switcher to the same
+view on another branch. Figures on the index are read from each branch's
+published `history.json` rather than recomputed, so it cannot disagree with the
+page it links to.
 
 ## Repository Structure
 
@@ -694,49 +685,16 @@ four above is caught today."* Catching them is what these tests are for. If one
 goes green without the corresponding upstream change, the test is wrong — not
 argus.
 
-## Code cleanliness
+## Duplicate tests (I6)
 
-Its **own page**, at `<branch>/code-cleanliness/`, linked from the summary hub
-and the dashboard header — deliberately not a panel under the verdict. The board answers one
-question, *does argus still behave the way a consumer expects*, and a
-duplication figure sitting beneath it invites the reading that it is part of
-that answer. It isn't: this is **reported and never gated**. A red build
-here would have to mean argus broke, not that a shell function grew; and a
-gated cleanliness number gets gamed rather than met. Two targets — this suite
-and argus — reported separately and never summed, so tidy tests cannot offset
-untidy source.
+A matrix row that is identical to another once its `id` and display name are
+removed is one test counted twice: it adds nothing, and it inflates the
+denominator of the board's pass rate. PR #13 removed six of these by hand. I6
+fails the build on any it finds (`.github/scripts/check-duplicate-tuples.py`),
+and fails closed: if it reads no matrix rows at all, that is a failure, not a
+pass.
 
-| Metric | KISS/DRY | Grounding |
-|---|---|---|
-| Duplicated lines | DRY | Juergens et al. (ICSE 2009): inconsistent changes to clones are a measurable defect source |
-| Cognitive complexity | KISS | Muñoz Barón, Wyrich & Wagner (ESEM 2020): validated against measured comprehension time |
-| Duplicate test tuples | DRY | Local. PR #13 cut six tests found this way by hand |
-
-Cyclomatic complexity, Halstead and the Maintainability Index are **excluded**:
-the first correlates ≈0.9 with raw line count (Graylin et al. 2009) so it
-re-measures size, and the others have no dependable independent predictive
-value. Chidamber & Kemerer is validated but object-oriented, and nothing here
-is.
-
-**The page leads with evidence.** Each figure is followed by the lines behind
-it — every clone group as `file:start–end ↔ file:start–end` with its token
-count, and each complex unit with the constructs that produced its score
-(`if ×3, while ×2, &&/|| ×3`). A number you cannot check is a number you have
-to take on trust, which is not what this suite is for.
-
-**There is no "not applicable".** Cognitive complexity used to report it for
-this suite, on the grounds that no implementation parses Actions YAML or shell.
-That was a cop-out — Campbell's rules are language-agnostic, and shell is what
-this repository is made of. It is measured directly now, with heredoc bodies
-excluded because to bash they are data, not control flow (counting them scored
-the embedded JavaScript and put `generate-dashboard.sh` at 1955).
-
-A metric that still cannot be produced renders as a **fault with its reason**,
-not a blank. A grey dash and a clean result look identical, and treating
-"nothing was measured" as "nothing is wrong" is the exact equivalence this
-suite exists to reject.
-
-Duplicate-tuple detection runs in two tiers — **exact** (every parameter
+It checks two tiers — **exact** (every parameter
 matches) and **invocation** (the same argus call, differing only by container
 name). A row that duplicates another on purpose is annotated in place:
 
@@ -747,5 +705,10 @@ name). A row that duplicates another on purpose is annotated in place:
 ```
 
 Two such pairs exist today (`E7`/`E11`, `R7`/`R12`) and both are annotated, so
-the metric reports zero unexplained duplicates rather than being tuned to
-ignore them.
+I6 passes with zero unexplained duplicates rather than being tuned to ignore
+them.
+
+This replaced a code-cleanliness page (duplication percentage, cognitive
+complexity, and this check as a report-only figure). The rest measured style,
+gated nothing, and sat outside what this suite is for; duplicate tests are the
+part that affects the suite's own numbers, so that part became a gate.

@@ -68,33 +68,6 @@ for b in $BRANCHES; do
     LATEST=$(jq -c '.[-1] // null' "$H")
     PREV=$(jq -c 'if length > 1 then .[-2] else null end' "$H")
   fi
-  HAS_CLEAN=false
-  [ -f "$SITE_DIR/$b/code-cleanliness/index.html" ] && HAS_CLEAN=true
-  # The branch's own figures, kept beside its history.json. Absent is rendered
-  # as "not measured" rather than omitted: a branch whose metrics did not run
-  # must not look tidier than one whose did.
-  CLEAN='null'
-  CF="$SITE_DIR/$b/cleanliness.json"
-  if [ -f "$CF" ] && jq empty "$CF" 2>/dev/null; then
-    # The per-branch specifics, not just the headline numbers: a card needs
-    # something true of THIS branch on its detail line, and "reported, never
-    # gated" was the same sentence on every card in every run.
-    CLEAN=$(jq -c '{
-      dup:    (.targets.suite.duplication.percent // null),
-      tuples: (if .targets.suite.tuple_dupes
-               then ((.targets.suite.tuple_dupes.exact_rows // 0)
-                   + (.targets.suite.tuple_dupes.invocation_rows // 0))
-               else null end),
-      cog:    (.targets.argus.cognitive.worst // null),
-      argusDup: (.targets.argus.duplication.percent // null),
-      worstUnit: (.targets.suite.cognitive.worst_at // null),
-      worstScore: (.targets.suite.cognitive.worst // null),
-      overCount: (.targets.suite.cognitive.over_threshold // null),
-      topCloneLines: (.targets.suite.duplication.groups[0].lines // null),
-      topCloneFile:  (.targets.suite.duplication.groups[0].a.file // null),
-      cloneGroups:   (.targets.suite.duplication.clones // null)
-    }' "$CF")
-  fi
   HAS_TESTS=false
   [ -f "$SITE_DIR/$b/tests/index.html" ] && HAS_TESTS=true
   # feat/foo publishes at /feat-foo/ but must READ as feat/foo. The branch
@@ -109,11 +82,9 @@ for b in $BRANCHES; do
     --arg b "$b" \
     --argjson latest "$LATEST" \
     --argjson prev "$PREV" \
-    --argjson clean "$HAS_CLEAN" \
     --argjson tests "$HAS_TESTS" \
-    --argjson metrics "$CLEAN" \
     --arg name "$NAME" \
-    '. + [{branch:$b, name:$name, latest:$latest, prev:$prev, hasClean:$clean, hasTests:$tests, metrics:$metrics}]' \
+    '. + [{branch:$b, name:$name, latest:$latest, prev:$prev, hasTests:$tests}]' \
     <<<"$CARDS")
 done
 
@@ -184,13 +155,6 @@ h1 { font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing
 :root[data-theme="light"] .eye { filter: grayscale(1) brightness(0.72); }
 
 .lede { font-size:0.82rem; color:var(--fg3); margin:0 0 28px; max-width:70ch; }
-.modes { display:inline-flex; border:1px solid var(--border); margin-bottom:18px; }
-.modes button { font-family:inherit; background:none; border:none; cursor:pointer;
-                padding:7px 15px; font-size:0.7rem; font-weight:700; text-transform:uppercase;
-                letter-spacing:0.07em; color:var(--fg3); border-right:1px solid var(--border); }
-.modes button:last-child { border-right:none; }
-.modes button:hover { color:var(--fg); }
-.modes button.on { background:var(--fg); color:var(--bg); }
 .branch { display:block; border:1px solid var(--border); background:var(--surface);
           margin-bottom:12px; text-decoration:none; color:inherit; transition:border-color .12s; }
 .branch:hover { border-color:var(--fg); }
@@ -225,10 +189,6 @@ footer { margin-top:34px; padding-top:16px; border-top:1px solid var(--border);
     <a href="https://github.com/huntridge-labs/argus">huntridge-labs/argus</a>,
     published per branch. Each branch keeps its own run history, so results from
     work in progress never overwrite the default branch's.</p>
-  <div class="modes" id="modes">
-    <button type="button" data-mode="tests" class="on">Test results</button>
-    <button type="button" data-mode="cleanliness">Code cleanliness</button>
-  </div>
   <div id="branches"></div>
   <footer id="foot"></footer>
 </div>
@@ -262,66 +222,32 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
            '</div><div class="l">' + esc(label) + '</div></div>';
   }
 
-  function card(b, mode) {
+  function card(b) {
     var h = b.latest;
     var body, note = '';
 
-    if (mode === 'cleanliness') {
-      var m = b.metrics;
-      if (!m) {
-        body = '<div class="none">No cleanliness figures published for this branch yet.</div>';
-      } else {
-        body = '<div class="bstats">' +
-          fig(m.dup != null ? Number(m.dup).toFixed(1) + '%' : '&mdash;', 'Duplicated') +
-          fig(m.tuples != null ? m.tuples : '&mdash;', 'Duplicate tuples',
-              (m.tuples ? 'warn' : '')) +
-          fig(m.cog != null ? m.cog : '&mdash;', 'argus cognitive, worst') +
-          '</div>';
-        // The worst thing on THIS branch, named. "Reported, never gated" was
-        // the same sentence on every card in every run -- true, and therefore
-        // useless as a per-branch detail line. The fact that nothing here
-        // gates is said once, in the footer, where a global fact belongs.
-        var bits = [];
-        if (m.worstUnit && m.worstScore != null) {
-          // Basename only: the card is a summary and the full path is on the
-          // page it links to, where the reader can also click it.
-          var wu = String(m.worstUnit).split('/').pop();
-          bits.push('worst unit <span class="mono">' + esc(wu) + '</span> (' +
-                    esc(m.worstScore) + ')' +
-                    (m.overCount ? ', ' + esc(m.overCount) + ' over' : ''));
-        }
-        if (m.topCloneLines && m.topCloneFile) {
-          bits.push('largest clone ' + esc(m.topCloneLines) + ' lines in <span class="mono">' +
-                    esc(String(m.topCloneFile).split('/').pop()) + '</span>');
-        }
-        note = bits.length ? '<div class="bline">' + bits.join(' &middot; ') + '</div>' : '';
-      }
-
+    if (!h) {
+      body = '<div class="none">Published, but no run history yet &mdash; figures appear ' +
+             'after the next complete run.</div>';
     } else {
-      if (!h) {
-        body = '<div class="none">Published, but no run history yet &mdash; figures appear ' +
-               'after the next complete run.</div>';
-      } else {
-        var worst = h.worst || (h.verdict === 'PASS' ? 'none' : 'closed');
-        var move = '';
-        if (b.prev && typeof b.prev.risk === 'number') {
-          var dlt = h.risk - b.prev.risk;
-          move = dlt === 0 ? ' &middot; no change vs previous run'
-               : ' &middot; ' + (dlt > 0 ? '\u25b2 +' + dlt : '\u25bc ' + dlt) + ' vs previous run';
-        }
-        var defined = h.defined != null ? h.defined : h.total;
-        var pct = h.pct_defined != null ? h.pct_defined : h.rate;
-        body = '<div class="bstats">' +
-          fig(esc(h.risk), 'Risk index', (h.risk ? (TONE[worst] || 'bad') : 'good')) +
-          fig(esc(h.passed) + '<span class="of">/' + esc(defined) + '</span>',
-              'Passing (' + esc(pct) + '%)') +
-          '</div>';
-        note = '<div class="bline">' + esc(LINE[worst] || '') + move +
-               (h.scope && h.scope !== 'all'
-                 ? ' &middot; scope <span class="mono">' + esc(h.scope) + '</span>' : '') +
-               '</div>';
+      var worst = h.worst || (h.verdict === 'PASS' ? 'none' : 'closed');
+      var move = '';
+      if (b.prev && typeof b.prev.risk === 'number') {
+        var dlt = h.risk - b.prev.risk;
+        move = dlt === 0 ? ' &middot; no change vs previous run'
+             : ' &middot; ' + (dlt > 0 ? '\u25b2 +' + dlt : '\u25bc ' + dlt) + ' vs previous run';
       }
-
+      var defined = h.defined != null ? h.defined : h.total;
+      var pct = h.pct_defined != null ? h.pct_defined : h.rate;
+      body = '<div class="bstats">' +
+        fig(esc(h.risk), 'Risk index', (h.risk ? (TONE[worst] || 'bad') : 'good')) +
+        fig(esc(h.passed) + '<span class="of">/' + esc(defined) + '</span>',
+            'Passing (' + esc(pct) + '%)') +
+        '</div>';
+      note = '<div class="bline">' + esc(LINE[worst] || '') + move +
+             (h.scope && h.scope !== 'all'
+               ? ' &middot; scope <span class="mono">' + esc(h.scope) + '</span>' : '') +
+             '</div>';
     }
 
     // THE WHOLE CARD IS THE LINK. It had a header anchor and a row of links
@@ -332,12 +258,10 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
     // The "Run" link went with it. It jumped to the raw Actions log, which is
     // not what anyone opening a results index is looking for, and it is still
     // one click away from the page this card leads to.
-    // Only link where a page actually exists. A branch can publish results
-    // before its cleanliness figures ever ran, and a card that navigates to a
-    // 404 is worse than one that plainly does not navigate.
-    var exists = mode === 'cleanliness' ? b.hasClean : b.hasTests;
-    var href = esc(b.branch) + '/' + (mode === 'cleanliness' ? 'code-cleanliness/' : 'tests/');
-    if (!exists) {
+    // Only link where a page actually exists: a card that navigates to a 404
+    // is worse than one that plainly does not navigate.
+    var href = esc(b.branch) + '/tests/';
+    if (!b.hasTests) {
       return '<div class="branch dead">' +
                '<div class="bhead">' +
                  '<span class="bname">' + esc(b.name || b.branch) + '</span>' +
@@ -359,26 +283,7 @@ cat >> "$SITE_DIR/index.html" << 'HTMLEOF3'
            '</a>';
   }
 
-  // The choice is a reading preference, not state anyone else depends on, so
-  // localStorage is right for it -- and every access is guarded, because it
-  // throws in a private window and the page must still render.
-  function paint(mode) {
-    document.getElementById('branches').innerHTML =
-      BRANCHES.map(function (b) { return card(b, mode); }).join('');
-    Array.prototype.forEach.call(document.querySelectorAll('.modes button'), function (btn) {
-      btn.className = btn.getAttribute('data-mode') === mode ? 'on' : '';
-    });
-    try { localStorage.setItem('argus-index-mode', mode); } catch (e) {}
-  }
-
-  var start = 'tests';
-  try { start = localStorage.getItem('argus-index-mode') || 'tests'; } catch (e) {}
-  if (start !== 'tests' && start !== 'cleanliness') { start = 'tests'; }
-
-  Array.prototype.forEach.call(document.querySelectorAll('.modes button'), function (btn) {
-    btn.addEventListener('click', function () { paint(btn.getAttribute('data-mode')); });
-  });
-  paint(start);
+  document.getElementById('branches').innerHTML = BRANCHES.map(card).join('');
 
   document.getElementById('foot').innerHTML =
     'Figures are read from each branch’s <span class="mono">history.json</span> rather than ' +
