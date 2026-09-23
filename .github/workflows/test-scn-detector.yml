@@ -1699,6 +1699,7 @@ jobs:
       - s23-custom-config
       - s24-single-file-multi-resource
       - s25-ai-fallback
+      - ai-key-check
     if: always()
     outputs:
       results: ${{ steps.collect.outputs.results }}
@@ -1730,6 +1731,7 @@ jobs:
           S23: ${{ needs.s23-custom-config.result }}
           S24: ${{ needs.s24-single-file-multi-resource.result }}
           S25: ${{ needs.s25-ai-fallback.result }}
+          AI_KEY: ${{ needs.ai-key-check.outputs.present }}
         run: |
           FAILURES=0
 
@@ -1772,7 +1774,16 @@ jobs:
           check "S22 cfn-classification" "$S22" "success"
           check "S23 custom-config" "$S23" "success"
           check "S24 single-file-multi-resource" "$S24" "success"
-          check "S25 ai-fallback" "$S25" "success"
+          # S25 is skipped by design when there is no ANTHROPIC_API_KEY (see
+          # ai-key-check), so without a key the correct outcome is `skipped`.
+          # Expecting success unconditionally turned that clean skip into a
+          # failure here -- the missing-secret-as-regression the skip exists
+          # to prevent.
+          if [ "$AI_KEY" = "true" ]; then
+            check "S25 ai-fallback" "$S25" "success"
+          else
+            check "S25 ai-fallback (no API key)" "$S25" "skipped"
+          fi
 
           echo ""
           echo "============================================"
