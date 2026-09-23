@@ -23,12 +23,7 @@
     {
       "ref": "main",
       "kind": "branch",
-      "note": "Default branch. What a consumer pinning @main gets today."
-    },
-    {
-      "ref": "fix/container-scan-no-silent-pass",
-      "kind": "branch",
-      "note": "argus PR #427. Adds validate-inputs, nine workflow_call outputs, search_paths/platform/fail_on_no_targets, and the argus_scan_incomplete sentinel. See ref-liveness: only the workflow YAML is branch-live, not the SDK."
+      "note": "Default branch. What a consumer pinning @main gets today. Carries argus PR #427 (validate-inputs, nine workflow_call outputs, search_paths/platform/fail_on_no_targets, the argus_scan_incomplete sentinel) since it merged on 2026-09-22 as 99c0166. The N-series and D5 were written as expected-red against that PR's branch; against main they are the evaluation of whether the fixes held in what shipped."
     }
   ],
   "targets": [

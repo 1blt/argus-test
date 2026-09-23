@@ -65,13 +65,3 @@ jobs:
       allow_failure: ${{ inputs.allow_failure == 'true' || inputs.allow_failure == true }}
       post_pr_comment: ${{ inputs.post_pr_comment == 'true' || inputs.post_pr_comment == true }}
 
-  scan-no-silent-pass:
-    name: "hardening (argus@fix/container-scan-no-silent-pass)"
-    needs: guard-ref
-    if: inputs.argus_ref == 'fix/container-scan-no-silent-pass'
-    uses: huntridge-labs/argus/.github/workflows/reusable-security-hardening.yml@fix/container-scan-no-silent-pass
-    with:
-      scanners: ${{ inputs.scanners }}
-      iac_path: ${{ inputs.iac_path }}
-      allow_failure: ${{ inputs.allow_failure == 'true' || inputs.allow_failure == true }}
-      post_pr_comment: ${{ inputs.post_pr_comment == 'true' || inputs.post_pr_comment == true }}

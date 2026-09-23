@@ -46,11 +46,3 @@ jobs:
       iac_path: ${{ inputs.iac_path }}
       fail_on_severity: ${{ inputs.fail_on_severity }}
 
-  scan-no-silent-pass:
-    name: "iac (argus@fix/container-scan-no-silent-pass)"
-    needs: guard-ref
-    if: inputs.argus_ref == 'fix/container-scan-no-silent-pass'
-    uses: huntridge-labs/argus/.github/workflows/infrastructure-scan.yml@fix/container-scan-no-silent-pass
-    with:
-      iac_path: ${{ inputs.iac_path }}
-      fail_on_severity: ${{ inputs.fail_on_severity }}

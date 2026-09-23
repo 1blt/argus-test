@@ -47,10 +47,3 @@ jobs:
     with:
       config_file: ${{ inputs.config_file }}
 
-  scan-no-silent-pass:
-    name: "config (argus@fix/container-scan-no-silent-pass)"
-    needs: guard-ref
-    if: inputs.argus_ref == 'fix/container-scan-no-silent-pass'
-    uses: huntridge-labs/argus/.github/workflows/container-scan-from-config.yml@fix/container-scan-no-silent-pass
-    with:
-      config_file: ${{ inputs.config_file }}

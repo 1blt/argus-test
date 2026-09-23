@@ -90,10 +90,11 @@ on:
         required: false
         type: boolean
         default: false
-      # --- inputs that exist only on refs carrying argus PR #427 -------------
+      # --- inputs added by argus PR #427 -------------------------------------
       # Passing an input a workflow does not declare fails the call at startup
-      # with no job and no annotation, so these are threaded only into the
-      # branch-pinned job below. `scan-main` must never be given them.
+      # with no job and no annotation. These were threaded only into a job
+      # pinned to #427's branch while it was under review; the branch merged on
+      # 2026-09-22 and main declares all three, so scan-main takes them now.
       search_paths:
         required: false
         type: string
@@ -154,21 +155,6 @@ jobs:
       fail_on_severity: ${{ inputs.fail_on_severity }}
       allow_failure: ${{ inputs.allow_failure }}
       post_pr_comment: false
-
-  scan-no-silent-pass:
-    name: "scan (argus@fix/container-scan-no-silent-pass)"
-    needs: guard-ref
-    if: inputs.argus_ref == 'fix/container-scan-no-silent-pass'
-    uses: huntridge-labs/argus/.github/workflows/container-scan.yml@fix/container-scan-no-silent-pass
-    with:
-      scan_mode: ${{ inputs.scan_mode }}
-      image_ref: ${{ inputs.image_ref }}
-      container_name: ${{ inputs.container_name }}
-      registry_username: ${{ inputs.registry_username }}
-      scanners: ${{ inputs.scanners }}
-      fail_on_severity: ${{ inputs.fail_on_severity }}
-      allow_failure: ${{ inputs.allow_failure }}
-      post_pr_comment: false
       search_paths: ${{ inputs.search_paths }}
       platform: ${{ inputs.platform }}
       fail_on_no_targets: ${{ inputs.fail_on_no_targets }}
@@ -178,10 +164,11 @@ jobs:
   # them. This is what closes GAP-2: before this, a caller could observe only
   # the run's conclusion, which cannot distinguish "clean" from "never ran".
   #
-  # The outputs exist only on refs carrying PR #427. On a ref without them every
-  # field comes back empty, and the artifact records `declared: false` so a test
-  # asserting on outputs fails with "this ref does not declare them" rather than
-  # with a confusing empty-string comparison.
+  # main declares all nine since PR #427 merged. `declared` is kept because a
+  # ref added here later may not: on such a ref every field comes back empty,
+  # and the artifact records `declared: false` so a test asserting on outputs
+  # fails with "this ref does not declare them" rather than with a confusing
+  # empty-string comparison.
   #
   # `if: always()` because the interesting case is a FAILED scan whose
   # overall_status and images_scanned are exactly what needs checking.
@@ -190,29 +177,25 @@ jobs:
     name: "publish scan outputs"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [guard-ref, scan-main, scan-no-silent-pass]
+    needs: [guard-ref, scan-main]
     if: always() && needs.guard-ref.result != 'failure'
     steps:
-      - name: Collect outputs from whichever ref job ran
+      - name: Collect the scan's outputs
         env:
           MAIN_RESULT: ${{ needs.scan-main.result }}
-          BRANCH_RESULT: ${{ needs.scan-no-silent-pass.result }}
           ARGUS_REF: ${{ inputs.argus_ref }}
-          # A skipped job's outputs are empty strings, so concatenating the two
-          # candidates yields whichever actually ran.
-          CRITICAL: ${{ needs.scan-main.outputs.critical_count }}${{ needs.scan-no-silent-pass.outputs.critical_count }}
-          HIGH: ${{ needs.scan-main.outputs.high_count }}${{ needs.scan-no-silent-pass.outputs.high_count }}
-          MEDIUM: ${{ needs.scan-main.outputs.medium_count }}${{ needs.scan-no-silent-pass.outputs.medium_count }}
-          LOW: ${{ needs.scan-main.outputs.low_count }}${{ needs.scan-no-silent-pass.outputs.low_count }}
-          TOTAL: ${{ needs.scan-main.outputs.total_count }}${{ needs.scan-no-silent-pass.outputs.total_count }}
-          VULNS_FOUND: ${{ needs.scan-main.outputs.vulnerabilities_found }}${{ needs.scan-no-silent-pass.outputs.vulnerabilities_found }}
-          IMAGES_SCANNED: ${{ needs.scan-main.outputs.images_scanned }}${{ needs.scan-no-silent-pass.outputs.images_scanned }}
-          OVERALL_STATUS: ${{ needs.scan-main.outputs.overall_status }}${{ needs.scan-no-silent-pass.outputs.overall_status }}
-          SCAN_STATUSES: ${{ needs.scan-main.outputs.scan_statuses }}${{ needs.scan-no-silent-pass.outputs.scan_statuses }}
+          CRITICAL: ${{ needs.scan-main.outputs.critical_count }}
+          HIGH: ${{ needs.scan-main.outputs.high_count }}
+          MEDIUM: ${{ needs.scan-main.outputs.medium_count }}
+          LOW: ${{ needs.scan-main.outputs.low_count }}
+          TOTAL: ${{ needs.scan-main.outputs.total_count }}
+          VULNS_FOUND: ${{ needs.scan-main.outputs.vulnerabilities_found }}
+          IMAGES_SCANNED: ${{ needs.scan-main.outputs.images_scanned }}
+          OVERALL_STATUS: ${{ needs.scan-main.outputs.overall_status }}
+          SCAN_STATUSES: ${{ needs.scan-main.outputs.scan_statuses }}
         run: |
           set -uo pipefail
           RESULT="$MAIN_RESULT"
-          [ "$RESULT" = "skipped" ] && RESULT="$BRANCH_RESULT"
 
           # "declared" distinguishes a ref that has no outputs from a scan that
           # produced empty ones. Nine empty strings could mean either.
