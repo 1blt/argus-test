@@ -41,9 +41,10 @@ DATE_STR="${DATE_STR:-$(date -u '+%Y-%m-%d %H:%M UTC')}"
 # board's history.json in the branch directory; CI fetches the published copy
 # before this runs, exactly as it does for that file.
 #
-# A metric that was not measured is recorded as null, never 0. Plotted, a null
-# is a break in the line: a run where the detector failed must not read as the
-# run where the code got clean.
+# A metric that was not measured is recorded as null, never 0, and the plot
+# joins straight across it: a run where the detector failed must not read as
+# the run where the code got clean. That run's own page already says the
+# metric was not measured, so the plot does not repeat it.
 HISTORY_FILE="${CLEAN_HISTORY_FILE:-$OUT_DIR/../cleanliness-history.json}"
 if [ ! -f "$HISTORY_FILE" ] || ! jq -e 'type == "array"' "$HISTORY_FILE" >/dev/null 2>&1; then
   echo '[]' > "$HISTORY_FILE"
@@ -55,8 +56,10 @@ CURRENT_RUN=$(jq -c \
   --arg url "${RUN_URL:-}" '
   def ok(m): (m | type) == "object" and (m.error | not);
   def pick(t): {
-    duplication: (if ok(t.duplication) and t.duplication.percent != null
-                  then (t.duplication.percent * 10 | round) / 10 else null end),
+    # Raw, not rounded here: jq rounds 5.85 up and the page'"'"'s toFixed(1)
+    # rounds it down, so the plot said 5.9 over a figure saying 5.8%. The page
+    # rounds both the same way.
+    duplication: (if ok(t.duplication) then t.duplication.percent else null end),
     cognitive:   (if ok(t.cognitive) then t.cognitive.worst else null end)
   };
   (.targets // {}) as $t
@@ -243,6 +246,8 @@ td.k { color:var(--fg); font-weight:600; white-space:nowrap; }
 .trend-head { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
 .trend-head > span:first-child { text-transform:uppercase; letter-spacing:var(--track); font-weight:600;
                                  font-size:0.64rem; color:var(--fg3); }
+.trend-head .cite { text-transform:none; letter-spacing:0; font-weight:400; text-decoration:none; }
+.trend-head .cite:hover { text-decoration:underline; }
 .trend-delta { font-size:0.68rem; color:var(--fg3); font-variant-numeric:tabular-nums; }
 .trend-svg { width:100%; height:92px; display:block; overflow:visible; }
 .ax-grid { stroke:var(--rule); stroke-width:1; }
@@ -253,8 +258,6 @@ td.k { color:var(--fg); font-weight:600; white-space:nowrap; }
 .trend-line { fill:none; stroke:var(--fg2); stroke-width:1.5; }
 .trend-dot { fill:var(--fg2); }
 .trend-dot.last { fill:var(--fg); }
-/* An unmeasured run: a hollow mark on the baseline, never a point at zero. */
-.trend-gap { fill:var(--bg); stroke:var(--warn-ink); stroke-width:1.2; }
 .trend-hit { fill:transparent; cursor:pointer; }
 .tip { position:absolute; display:none; background:var(--fg); color:var(--bg); padding:7px 10px;
        font-size:0.7rem; pointer-events:none; z-index:50; white-space:nowrap; }
@@ -370,20 +373,27 @@ __NAV_JS__
             ['tuples', 'Unexplained tuples', '']],
     argus: [['duplication', 'Duplicated lines', '%'], ['cognitive', 'Worst unit', '']]
   };
+  // Each plot title carries its metric's citation, from the same `ref` the
+  // references list is built from, so the two cannot disagree.
+  var CFG_KEY = { duplication: 'duplication', cognitive: 'cognitive', tuples: 'tuple_dupes' };
+  var CITED = Object.keys(CFG.metrics || {}).map(function (k) { return CFG.metrics[k].ref; })
+    .filter(function (n) { return typeof n === 'number'; });
+  function cite(m) {
+    var n = ((CFG.metrics || {})[CFG_KEY[m]] || {}).ref;
+    return typeof n === 'number' ? ' <a class="cite" href="#ref-' + n + '">[' + n + ']</a>' : '';
+  }
   function valOf(p, key, m) { var t = p[key]; return t && typeof t[m] === 'number' ? t[m] : null; }
   function fmt(v, m) { return m === 'duplication' ? v.toFixed(1) : String(v); }
 
-  // The delta is against the previous run that MEASURED this metric. Against
-  // an unmeasured one there is nothing to subtract, and skipping it silently
-  // would still be a delta across the gap -- so the text says how far back.
+  // The delta is against the previous run that measured this metric, and
+  // says how far back that was when it is not the previous run.
   function delta(key, m, unit) {
     var got = [];
     for (var i = HIST.length - 1; i >= 0 && got.length < 2; i--) {
       var v = valOf(HIST[i], key, m);
       if (v !== null) got.push({ v: v, i: i });
     }
-    if (valOf(HIST[HIST.length - 1] || {}, key, m) === null) return 'not measured this run';
-    if (got.length < 2) return '';
+    if (valOf(HIST[HIST.length - 1] || {}, key, m) === null || got.length < 2) return '';
     var d = got[0].v - got[1].v, back = got[0].i - got[1].i;
     var s = d === 0 ? 'no change' : (d > 0 ? '+' : '−') + fmt(Math.abs(d), m) + unit;
     return s + (back > 1 ? ' vs ' + back + ' runs ago' : ' vs last run');
@@ -391,7 +401,7 @@ __NAV_JS__
 
   function trendRow(key) {
     return '<div class="trends">' + TRENDS[key].map(function (t) {
-      return '<div><div class="trend-head"><span>' + esc(t[1]) + '</span>' +
+      return '<div><div class="trend-head"><span>' + esc(t[1]) + cite(t[0]) + '</span>' +
              '<span class="trend-delta">' + esc(delta(key, t[0], t[2])) + '</span></div>' +
              '<svg class="trend-svg" data-t="' + key + '" data-m="' + t[0] + '"></svg></div>';
     }).join('') + '</div>';
@@ -405,8 +415,8 @@ __NAV_JS__
   }
 
   // The board's drawSeries, less what does not apply here (verdict dots), plus
-  // gaps: x is the run's position in the history, so an unmeasured run keeps
-  // its slot and the line breaks across it instead of joining its neighbours.
+  // unmeasured runs: x is the run's position in the history, so such a run
+  // keeps its slot and the line joins its neighbours across it.
   function drawTrend(svg) {
     var key = svg.dataset.t, m = svg.dataset.m, tip = $('tip');
     var vals = HIST.map(function (p) { return valOf(p, key, m); });
@@ -437,24 +447,21 @@ __NAV_JS__
         g += '<text class="ax-lbl" x="' + xs(i) + '" y="' + (H - 4) + '" text-anchor="' + anchor + '">' +
              esc(String(HIST[i].date || '').split(' ')[0].slice(5)) + '</text>';
       });
-    // One path per unbroken run of measured points.
-    var runs = [], cur = [];
-    vals.forEach(function (v, i) {
-      if (v === null) { if (cur.length) runs.push(cur); cur = []; } else cur.push(i);
+    // One line through the measured points, joined straight across any run
+    // that did not measure this metric.
+    var pts = [];
+    vals.forEach(function (v, i) { if (v !== null) pts.push(i); });
+    var line = '', area = 'M' + xs(pts[0]) + ',' + (padT + plotH);
+    pts.forEach(function (i, j) {
+      line += (j ? ' L' : 'M') + xs(i) + ',' + ys(vals[i]);
+      area += ' L' + xs(i) + ',' + ys(vals[i]);
     });
-    if (cur.length) runs.push(cur);
-    runs.forEach(function (r) {
-      var line = '', area = 'M' + xs(r[0]) + ',' + (padT + plotH);
-      r.forEach(function (i, j) {
-        line += (j ? ' L' : 'M') + xs(i) + ',' + ys(vals[i]);
-        area += ' L' + xs(i) + ',' + ys(vals[i]);
-      });
-      area += ' L' + xs(r[r.length - 1]) + ',' + (padT + plotH) + ' Z';
-      g += '<path class="trend-area" d="' + area + '"/><path class="trend-line" d="' + line + '"/>';
-      if (r.length === 1) g += '<circle class="trend-dot" cx="' + xs(r[0]) + '" cy="' + ys(vals[r[0]]) + '" r="2.4"/>';
-    });
-    vals.forEach(function (v, i) {
-      if (v === null) g += '<circle class="trend-gap" cx="' + xs(i) + '" cy="' + (padT + plotH) + '" r="2.6"/>';
+    area += ' L' + xs(pts[pts.length - 1]) + ',' + (padT + plotH) + ' Z';
+    g += '<path class="trend-area" d="' + area + '"/><path class="trend-line" d="' + line + '"/>';
+    // A dot on every sample, so the reader can see where the measurements are
+    // and the line reads as joining them rather than as a continuous signal.
+    pts.forEach(function (i) {
+      g += '<circle class="trend-dot" cx="' + xs(i) + '" cy="' + ys(vals[i]) + '" r="2.2"/>';
     });
     var last = n - 1;
     if (vals[last] !== null) {
@@ -463,7 +470,7 @@ __NAV_JS__
            ys(vals[last]) - 5 : ys(vals[last]) + 11) + '" text-anchor="end">' + fmt(vals[last], m) + '</text>';
     }
     var bw = plotW / (n - 1);
-    HIST.forEach(function (p, i) {
+    pts.forEach(function (i) {
       g += '<rect class="trend-hit" x="' + (xs(i) - bw / 2) + '" y="0" width="' + bw +
            '" height="' + H + '" data-i="' + i + '"/>';
     });
@@ -472,8 +479,7 @@ __NAV_JS__
       var p = HIST[+r.dataset.i], v = vals[+r.dataset.i];
       r.addEventListener('mouseenter', function (e) {
         var sha = key === 'argus' ? p.argus_sha : p.self_sha;
-        tip.innerHTML = '<b>' + esc(p.date) + '</b><br>' +
-          (v === null ? 'not measured' : esc(fmt(v, m))) +
+        tip.innerHTML = '<b>' + esc(p.date) + '</b><br>' + esc(fmt(v, m)) +
           (sha ? ' &middot; <span class="mono">' + esc(String(sha).slice(0, 7)) + '</span>' : '');
         tip.style.display = 'block';
         tip.style.left = (e.clientX + window.scrollX + 12) + 'px';
@@ -598,7 +604,7 @@ __NAV_JS__
             }
             return '<tr' + (u.score > c.threshold ? ' class="over"' : '') + '>' +
                    '<td class="num">' + esc(u.score) + '</td>' +
-                   '<td>' + loc(key, u.file, u.line) + ' <span class="unit">' + esc(u.name) + '</span></td>' +
+                   '<td>' + loc(key, u.file, u.line, u.end) + ' <span class="unit">' + esc(u.name) + '</span></td>' +
                    '<td class="why">' + why + '</td></tr>';
           }).join('') + '</tbody></table>';
       }
@@ -643,9 +649,10 @@ __NAV_JS__
     '<tr><td class="k">Cognitive complexity</td><td>KISS</td><td>Validated against measured ' +
       'comprehension time <a href="#ref-2">[2]</a>. Threshold 15 is SonarSource\u2019s default \u2014 ' +
       'a convention, not a finding.</td></tr>' +
-    '<tr><td class="k">Duplicate test tuples</td><td>DRY</td><td>Local. PR #13 cut six tests found ' +
-      'this way by hand; a redundant test also inflates the denominator of the pass ' +
-      'rate.</td></tr>' +
+    '<tr><td class="k">Duplicate test tuples</td><td>DRY</td><td>A test is redundant when the rest ' +
+      'of the suite already covers what it exercises <a href="#ref-7">[7]</a>; identical matrix rows ' +
+      'are the literal case. PR #13 cut six found this way by hand, and each also inflated the ' +
+      'denominator of the pass rate.</td></tr>' +
     '</tbody></table>';
 
   // Every figure above should be reproducible by hand from the evidence beside
@@ -705,7 +712,9 @@ __NAV_JS__
     // Only what the page cites, and the citation IS the link. Printing the
     // raw URL beside it repeated the destination in a form nobody reads and
     // made every entry twice as long.
-    (CFG.references || []).filter(function (r) { return r.n === 1 || r.n === 2; })
+    // Cited means a metric names it with `ref` in the config; the excluded
+    // metrics' references stay in the config as provenance only.
+    (CFG.references || []).filter(function (r) { return CITED.indexOf(r.n) !== -1; })
       .map(function (r) {
         return '<div class="ref" id="ref-' + r.n + '"><span class="n">[' + r.n + ']</span>' +
                '<span><a href="' + esc(r.url) + '">' + esc(r.ieee) + '</a></span></div>';

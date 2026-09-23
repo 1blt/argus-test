@@ -127,6 +127,13 @@ def snippet(rel, start, end, length):
 
 for g in data.get("groups", []):
     n = g.get("lines", 0)
+    # The same bad `end` was also published as the range itself, so the page
+    # linked 358-310 and 207-41. Correct it at the source, from the length,
+    # so the range on the page is the range the text below it was read from.
+    for side in ("a", "b"):
+        s = g[side]
+        if int(s["end"]) < int(s["start"]):
+            s["end"] = int(s["start"]) + max(0, int(n) - 1)
     a = snippet(g["a"]["file"], g["a"]["start"], g["a"]["end"], n)
     b = snippet(g["b"]["file"], g["b"]["start"], g["b"]["end"], n)
     if a is not None:
@@ -249,7 +256,9 @@ for f in pathlib.Path(sys.argv[1]).rglob("*.py"):
                 c = why.get("= explained", 0)
             # relative to the checkout root, so the page can build a blob URL
             units.append({"file": str(f.relative_to(root)), "name": node.name,
-                          "line": node.lineno, "score": c, "why": why})
+                          "line": node.lineno,
+                          "end": getattr(node, "end_lineno", None) or node.lineno,
+                          "score": c, "why": why})
 units.sort(key=lambda u: -u["score"])
 print(json.dumps({
     "worst": units[0]["score"] if units else 0,
@@ -369,7 +378,7 @@ for f in sorted(root.glob(".github/scripts/*.sh")):
             if depth_guard <= 0:
                 sc, why = score_lines(buf)
                 units.append({"file": rel, "name": cur + "()", "line": start,
-                              "score": sc, "why": why})
+                              "end": i, "score": sc, "why": why})
                 cur = None
             else:
                 buf.append(line)
@@ -377,8 +386,10 @@ for f in sorted(root.glob(".github/scripts/*.sh")):
             toplevel.append(line)
     sc, why = score_lines(toplevel)
     if sc:
+        # The top level is everything outside the functions, so its extent
+        # is the file.
         units.append({"file": rel, "name": "(top level)", "line": 1,
-                      "score": sc, "why": why})
+                      "end": len(lines), "score": sc, "why": why})
 
 # 2. workflow `run:` blocks: one unit each, since each is an executable body
 RUN = re.compile(r'^(\s*)(?:- name:.*\n\s*)?\s*run:\s*\|')
@@ -400,8 +411,12 @@ for f in sorted(root.glob(".github/workflows/*.yml")):
             body.append(ln); j += 1
         sc, why = score_lines(mask_heredocs(body))
         if sc:
+            # The block ends at its last non-blank line; blank lines before
+            # the next key belong to neither. body[k] is file line start+1+k.
+            last = max((k for k, ln in enumerate(body) if ln.strip()), default=-1)
             units.append({"file": rel, "name": f"run: block @{start}",
-                          "line": start, "score": sc, "why": why})
+                          "line": start, "end": start + 1 + last,
+                          "score": sc, "why": why})
         i = j
 
 units.sort(key=lambda u: -u["score"])

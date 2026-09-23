@@ -41,18 +41,21 @@
     "duplication": {
       "label": "Duplicated lines",
       "kiss_dry": "DRY",
+      "ref": 1,
       "floor": "5 lines / 50 tokens",
       "note": "Type-1 and Type-2 clones only, so a low number is weaker evidence than a high one."
     },
     "cognitive": {
       "label": "Cognitive complexity",
       "kiss_dry": "KISS",
+      "ref": 2,
       "threshold": 15,
       "note": "Threshold is SonarSource's default: a convention, not a finding. Python via the reference implementation; shell and Actions run: blocks by applying the same rules, with heredoc bodies excluded because to bash they are data."
     },
     "tuple_dupes": {
       "label": "Duplicate test tuples",
       "kiss_dry": "DRY",
+      "ref": 7,
       "note": "Two tiers: exact, and same-invocation. A deliberate pair is annotated in the workflow with '# dry:allow <reason>' rather than the metric being tuned around it."
     }
   },
@@ -92,6 +95,12 @@
       "ieee": "K. D. Welker, \u201cThe software maintainability index revisited,\u201d CrossTalk, vol. 14, pp. 18\u201321, Aug. 2001.",
       "note": "why Maintainability Index is excluded rather than merely de-emphasised",
       "url": "https://apps.dtic.mil/sti/citations/ADA593295"
+    },
+    {
+      "n": 7,
+      "ieee": "N. Koochakzadeh and V. Garousi, “A tester-assisted methodology for test redundancy detection,” Advances in Software Engineering, vol. 2010, pp. 1–13, 2010.",
+      "note": "a test is redundant when the rest of the suite already exercises what it does; two matrix rows with the same parameters are the literal case, and removing one loses nothing",
+      "url": "https://doi.org/10.1155/2010/932686"
     }
   ]
 }
