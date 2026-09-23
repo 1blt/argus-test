@@ -407,11 +407,14 @@ __NAV_JS__
     }).join('') + '</div>';
   }
 
+  // The board's steps, less any whose half is not a whole number: the middle
+  // gridline is labelled top/2, and 25 put a rounded 12.5 there ("13"). 150
+  // and 250 stay, so a worst unit of 102 is not drawn against 200.
   function niceMax(v) {
     if (v <= 5) return 5;
     var mag = Math.pow(10, Math.floor(Math.log10(v)));
     return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map(function (x) { return x * mag; })
-      .filter(function (c) { return c >= v; })[0] || 10 * mag;
+      .filter(function (c) { return c >= v && Number.isInteger(c / 2); })[0] || 10 * mag;
   }
 
   // The board's drawSeries, less what does not apply here (verdict dots), plus
@@ -441,12 +444,17 @@ __NAV_JS__
            '" y2="' + ys(v) + '"/><text class="ax-lbl" x="' + (padL - 6) + '" y="' + (ys(v) + 3) +
            '" text-anchor="end">' + (top <= 5 && v % 1 ? v.toFixed(1) : Math.round(v)) + '</text>';
     });
-    [0, Math.floor((n - 1) / 2), n - 1].filter(function (v, i, a) { return a.indexOf(v) === i; })
-      .forEach(function (i) {
-        var anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
-        g += '<text class="ax-lbl" x="' + xs(i) + '" y="' + (H - 4) + '" text-anchor="' + anchor + '">' +
-             esc(String(HIST[i].date || '').split(' ')[0].slice(5)) + '</text>';
-      });
+    // Dates as MM-DD; where two labelled runs fall on the same day, the date
+    // alone cannot tell them apart, so those show the time instead.
+    var xi = [0, Math.floor((n - 1) / 2), n - 1].filter(function (v, i, a) { return a.indexOf(v) === i; });
+    function day(i) { return String(HIST[i].date || '').split(' ')[0].slice(5); }
+    function clock(i) { return String(HIST[i].date || '').split(' ')[1] || day(i); }
+    xi.forEach(function (i) {
+      var anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+      var shared = xi.some(function (j) { return j !== i && day(j) === day(i); });
+      g += '<text class="ax-lbl" x="' + xs(i) + '" y="' + (H - 4) + '" text-anchor="' + anchor + '">' +
+           esc(shared ? clock(i) : day(i)) + '</text>';
+    });
     // One line through the measured points, joined straight across any run
     // that did not measure this metric.
     var pts = [];
