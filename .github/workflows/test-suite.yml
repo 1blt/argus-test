@@ -833,16 +833,71 @@ jobs:
 
           echo "Resolved ${ARGUS_REPO}@${ARGUS_REF} to ${ARGUS_SHA_SHORT} (version ${ARGUS_VERSION:-unknown})"
 
-      # Which parts of the ref are actually under test. Runs before the
-      # dashboard so the board can state the split next to the ref rather than
-      # implying a branch run tested the whole branch.
+      # WHERE THE LIVE SITE ACTUALLY IS. Resolved once, from the Pages API,
+      # because `<owner>.github.io/<repo>` is a guess that is wrong the moment
+      # a custom domain is configured -- and it is: this fork serves from
+      # alanwang.dev. Every fetch below reads the live site to carry the other
+      # branches forward, so guessing the host wrong does not degrade the site,
+      # it deletes it.
+      - name: Resolve the published site URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          SITE=$(gh api "repos/${{ github.repository }}/pages" --jq '.html_url' 2>/dev/null || true)
+          if [ -z "$SITE" ] || [ "$SITE" = "null" ]; then
+            SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
+            echo "::warning::Pages API returned no html_url; falling back to the conventional URL $SITE"
+          fi
+          SITE="${SITE%/}"
+          # The API reports http:// whenever https_enforced is false, which is
+          # the default for a custom domain. HTTPS is usually served anyway, so
+          # prefer it and fall back only if it genuinely does not answer --
+          # these fetches decide what the deploy keeps, over the open internet.
+          if [ "${SITE#http://}" != "$SITE" ]; then
+            HTTPS="https://${SITE#http://}"
+            if curl -sSfL -o /dev/null --max-time 20 "$HTTPS/" 2>/dev/null; then
+              SITE="$HTTPS"
+            else
+              echo "::notice::$HTTPS did not answer; reading the site over http."
+            fi
+          fi
+          echo "site_url=$SITE" >> "$GITHUB_ENV"
+          echo "Live site: $SITE"
+
+      # Each branch gets its own site under /<branch>/, so dev results never
+      # overwrite main's and the two histories stay independent. This runs
+      # before the branch list below, which reads the slug it sets.
+      - name: Fetch previous history.json for this branch
+        id: branch
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          # One slug for both the artifact name and the site directory.
+          # Artifact names reject / : " < > | * ? \ \r \n; a nested directory
+          # would also make every relative link on the page depth-dependent,
+          # so feat/foo publishes at /feat-foo/ and displays as "feat/foo".
+          SLUG=$(echo "$BRANCH" | tr '/:"<>|*?\\' '-')
+          mkdir -p "_site/$SLUG"
+          # -L: a custom domain answers the apex with a 301, and curl without
+          # it exits 0 having written the redirect body, so `||` never fires
+          # and the history is silently reset to [] on every run.
+          curl -sSfL "$site_url/$SLUG/history.json" -o "_site/$SLUG/history.json" 2>/dev/null \
+            || echo '[]' > "_site/$SLUG/history.json"
+          jq empty "_site/$SLUG/history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/history.json"
+          {
+            echo "branch_dir=$SLUG"
+            echo "branch_slug=$SLUG"
+            echo "branch_name=$BRANCH"
+          } >> "$GITHUB_ENV"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "Branch '$BRANCH' publishes at /$SLUG/; history entries: $(jq 'length' "_site/$SLUG/history.json")"
+
       # The branch list every page's switcher needs. Read from the LIVE site
       # before anything is regenerated, because the pages are written before
       # the preserve step runs and so cannot see their siblings otherwise.
       - name: Fetch the published branch list
         run: |
-          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
-          curl -sSf "$SITE/branches.json" -o /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
+          curl -sSfL "$site_url/branches.json" -o /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
           jq empty /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
           # This branch may not be listed yet (first run), so add it.
           B=$(jq -c --arg s "${{ env.branch_slug }}" --arg n "${{ env.branch_name }}" \
@@ -850,6 +905,9 @@ jobs:
           echo "BRANCHES_JSON=$B" >> "$GITHUB_ENV"
           echo "branch switcher will list: $(jq -r 'map(.slug)|join(", ")' <<<"$B")"
 
+      # Which parts of the ref are actually under test. Runs before the
+      # dashboard so the board can state the split next to the ref rather than
+      # implying a branch run tested the whole branch.
       - name: Audit ref liveness
         env:
           GH_TOKEN: ${{ github.token }}
@@ -871,30 +929,6 @@ jobs:
             || echo "::notice::Could not check out argus for cleanliness metrics; that panel will read 'not measured'."
           bash .github/scripts/cleanliness-metrics.sh \
             _site/liveness/cleanliness.json /tmp/argus-clean || true
-
-      # Each branch gets its own site under /<branch>/, so dev results never
-      # overwrite main's and the two histories stay independent.
-      - name: Fetch previous history.json for this branch
-        id: branch
-        run: |
-          BRANCH="${GITHUB_REF_NAME}"
-          # One slug for both the artifact name and the site directory.
-          # Artifact names reject / : " < > | * ? \ \r \n; a nested directory
-          # would also make every relative link on the page depth-dependent,
-          # so feat/foo publishes at /feat-foo/ and displays as "feat/foo".
-          SLUG=$(echo "$BRANCH" | tr '/:"<>|*?\\' '-')
-          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
-          mkdir -p "_site/$SLUG"
-          curl -sSf "$SITE/$SLUG/history.json" -o "_site/$SLUG/history.json" 2>/dev/null \
-            || echo '[]' > "_site/$SLUG/history.json"
-          jq empty "_site/$SLUG/history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/history.json"
-          {
-            echo "branch_dir=$SLUG"
-            echo "branch_slug=$SLUG"
-            echo "branch_name=$BRANCH"
-          } >> "$GITHUB_ENV"
-          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
-          echo "Branch '$BRANCH' publishes at /$SLUG/; history entries: $(jq 'length' "_site/$SLUG/history.json")"
 
       # Per-job log URLs so the dashboard's Logs column points at the job that ran
       # each test rather than repeating the run URL on every row. conclusion and
@@ -1004,13 +1038,35 @@ jobs:
       - name: Preserve every other branch's site
         run: |
           set -uo pipefail
-          SITE="https://${{ github.repository_owner }}.github.io/$(echo '${{ github.repository }}' | cut -d/ -f2)"
           MINE="${{ env.branch_slug }}"
-          curl -sSf "$SITE/branches.json" -o /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
-          jq empty /tmp/branches.json 2>/dev/null || echo '[]' > /tmp/branches.json
-          if [ "$(jq 'length' /tmp/branches.json)" = "0" ]; then
-            echo '[{"slug":"main","name":"main"},{"slug":"dev","name":"dev"}]' > /tmp/branches.json
+
+          # Three outcomes, and they are not the same thing:
+          #   0  -> a list came back; use it.
+          #   22 -> -f saw a 4xx. Nothing has ever published here. Empty is
+          #         the truth, and deleting nothing is correct.
+          #   *  -> DNS, TLS, a proxy, a 5xx. We do not know what is live, and
+          #         a deploy built on that guess replaces the whole site with
+          #         whatever we managed to assemble. Refuse instead.
+          # The old code collapsed all three into `|| echo '[]'` and then
+          # backfilled a hardcoded [main, dev], so a fetch that failed for any
+          # reason silently deleted every branch outside that pair. That is
+          # what removed fix/pr427-eval after it had published correctly.
+          HTTP=$(curl -sSL -o /tmp/branches.json -w '%{http_code}' \
+                   "$site_url/branches.json" 2>/dev/null) || RC=$?
+          RC=${RC:-0}
+          if [ "$RC" -eq 0 ] && [ "$HTTP" = "200" ]; then
+            jq empty /tmp/branches.json 2>/dev/null || {
+              echo "::error::$site_url/branches.json returned 200 but is not JSON. Refusing to deploy, because a site assembled from an unknown branch list deletes the branches it failed to see."
+              exit 1
+            }
+          elif [ "$RC" -eq 0 ] && [ "$HTTP" = "404" ]; then
+            echo "No branches.json live yet ($HTTP); nothing has published here before."
+            echo '[]' > /tmp/branches.json
+          else
+            echo "::error::Could not read $site_url/branches.json (curl rc=$RC, http=$HTTP). Refusing to deploy: Pages replaces the whole site, so publishing without knowing which branches are live would delete them."
+            exit 1
           fi
+
           KEPT=0
           for SLUG in $(jq -r '.[].slug' /tmp/branches.json); do
             [ "$SLUG" = "$MINE" ] && continue
@@ -1018,7 +1074,11 @@ jobs:
             GOT=0
             for f in index.html history.json cleanliness.json favicon.png \
                      tests/index.html code-cleanliness/index.html; do
-              curl -sSf "$SITE/$SLUG/$f" -o "_site/$SLUG/$f" 2>/dev/null && GOT=$((GOT + 1))
+              # -L for the same reason as everywhere else: without it a custom
+              # domain's 301 body gets written into the file and counted as a
+              # successful preserve, which is how /dev/ became a 162-byte
+              # "301 Moved Permanently" stub that still rendered on the index.
+              curl -sSfL "$site_url/$SLUG/$f" -o "_site/$SLUG/$f" 2>/dev/null && GOT=$((GOT + 1))
             done
             rmdir "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness" 2>/dev/null || true
             if [ "$GOT" -eq 0 ]; then
