@@ -944,19 +944,6 @@ jobs:
           bash .github/scripts/audit-ref-liveness.sh \
             "${{ inputs.argus_ref || 'main' }}" _site/liveness/ref-liveness.json
 
-      # KISS/DRY metrics. Report-only: this step never fails the job, because a
-      # red build has to mean argus broke.
-      - name: Measure code cleanliness
-        continue-on-error: true
-        run: |
-          mkdir -p _site/liveness
-          git clone --depth 1 --quiet \
-            --branch "${{ inputs.argus_ref || 'main' }}" \
-            https://github.com/huntridge-labs/argus.git /tmp/argus-clean 2>/dev/null \
-            || echo "::notice::Could not check out argus for cleanliness metrics; that panel will read 'not measured'."
-          bash .github/scripts/cleanliness-metrics.sh \
-            _site/liveness/cleanliness.json /tmp/argus-clean || true
-
       # Per-job log URLs so the dashboard's Logs column points at the job that ran
       # each test rather than repeating the run URL on every row. conclusion and
       # the first failed step come too: a test spawns several jobs (discover,
@@ -1028,34 +1015,12 @@ jobs:
           SHARED_DIR: _site/${{ env.branch_dir }}
           SITE_UP: "../"
           LIVENESS_FILE: _site/liveness/ref-liveness.json
-          CLEAN_FILE: _site/liveness/cleanliness.json
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
           ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
           ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
           ARGUS_SHA_SHORT: ${{ steps.argus-ref.outputs.argus_sha_short }}
           ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
         run: bash .github/scripts/generate-dashboard.sh
-
-      # Cleanliness lives on its own page, not under the verdict. The board
-      # answers "does argus still behave as a consumer expects"; a duplication
-      # figure beneath it invites the reading that it is part of that answer.
-      # Report-only, so this never fails the job.
-      - name: Generate the code-cleanliness page
-        continue-on-error: true
-        env:
-          CLEAN_FILE: _site/liveness/cleanliness.json
-          OUT_DIR: _site/${{ env.branch_dir }}/code-cleanliness
-          BRANCH: ${{ env.branch_name }}
-          ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
-          ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
-          ARGUS_SHA: ${{ steps.argus-ref.outputs.argus_sha }}
-          ARGUS_VERSION: ${{ steps.argus-ref.outputs.argus_version }}
-          SELF_REPO: ${{ github.repository }}
-          SELF_SHA: ${{ github.sha }}
-          BRANCH_SLUG: ${{ env.branch_slug }}
-          BRANCHES_JSON: ${{ env.BRANCHES_JSON }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash .github/scripts/generate-cleanliness-page.sh
 
       # Pages replaces the WHOLE site on every deployment, so a branch that
       # publishes must carry every other branch's pages with it or it deletes
@@ -1098,10 +1063,9 @@ jobs:
           KEPT=0
           for SLUG in $(jq -r '.[].slug' /tmp/branches.json); do
             [ "$SLUG" = "$MINE" ] && continue
-            mkdir -p "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness"
+            mkdir -p "_site/$SLUG/tests"
             GOT=0
-            for f in index.html history.json cleanliness.json favicon.png \
-                     tests/index.html code-cleanliness/index.html; do
+            for f in index.html history.json favicon.png tests/index.html; do
               # -L for the same reason as everywhere else: without it a custom
               # domain's 301 body gets written into the file and counted as a
               # successful preserve, which is how /dev/ became a 162-byte
@@ -1122,7 +1086,7 @@ jobs:
               fi
               GOT=$((GOT + 1))
             done
-            rmdir "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness" 2>/dev/null || true
+            rmdir "_site/$SLUG/tests" 2>/dev/null || true
             if [ "$GOT" -eq 0 ]; then
               rm -rf "_site/$SLUG"
               echo "  $SLUG: nothing live to preserve"
@@ -1153,17 +1117,6 @@ jobs:
             printf '%s\n' '<body><p>Redirecting to <a href="tests/">test results</a>.</p></body></html>'
           } > "$D/index.html"
           echo "Wrote $D/index.html -> tests/"
-
-      # cleanliness.json follows its branch into the published site. The root
-      # index reads each branch's copy to show that branch's figures, exactly
-      # as it reads history.json -- staging is deleted below, so anything the
-      # root needs has to be moved out of it first.
-      - name: Keep the cleanliness figures with the branch
-        run: |
-          if [ -f _site/liveness/cleanliness.json ]; then
-            cp _site/liveness/cleanliness.json "_site/${{ env.branch_dir }}/cleanliness.json"
-            echo "Kept cleanliness.json for ${{ env.branch_dir }}"
-          fi
 
       # The site root: one card per published branch, with that branch's
       # headline figures. Read from each <branch>/history.json rather than

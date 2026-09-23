@@ -2,17 +2,14 @@
 # =============================================================================
 # Shared navigation for the generated pages.
 #
-# ONE DEFINITION, THREE PAGES. The hub, the board and the cleanliness page are
-# self-contained HTML files with their own CSS, so a nav bar written into each
-# would be three copies drifting apart -- and this repo now measures its own
-# duplication and would report it. Each generator cats these two functions into
-# its output instead.
+# ONE DEFINITION. The generated pages are self-contained HTML files with their
+# own CSS, so a nav bar written into each would be copies drifting apart. Each
+# generator cats these functions into its output instead.
 #
 # WHAT IT HAS TO SOLVE. The site is three levels deep across an open-ended
-# number of branches: / -> /<slug>/ -> /<slug>/{tests,code-cleanliness}/. From
-# any page a reader needs to go up, move sideways to the sibling page, and jump
-# to the same view on another branch -- that last one being the whole point of
-# publishing per branch, and the one that was missing entirely.
+# number of branches: / -> /<slug>/ -> /<slug>/tests/. From the board a reader
+# needs to go up, and jump to the same view on another branch -- the whole
+# point of publishing per branch.
 #
 # emit_nav_css   stylesheet rules, inside the page's <style>
 # emit_nav_js    renderNav(cfg) into the page's <script>
@@ -29,39 +26,24 @@ cat <<'CSSEOF'
 .crumbs a:hover { color:var(--fg); text-decoration:underline; text-underline-offset:3px; }
 .crumbs .here { color:var(--fg); }
 .crumbs .car { color:var(--border); font-weight:400; }
-.tabs { display:flex; margin-left:auto; border:1px solid var(--border); }
-.tabs a { padding:5px 11px; font-size:0.68rem; font-weight:700; text-transform:uppercase;
-          letter-spacing:0.06em; color:var(--fg3); text-decoration:none;
-          border-right:1px solid var(--border); }
-.tabs a:last-child { border-right:none; }
-.tabs a:hover { color:var(--fg); }
-.tabs a.on { background:var(--fg); color:var(--bg); }
 .switch { font-size:0.7rem; color:var(--fg3); width:100%; }
 .switch b { font-weight:700; text-transform:uppercase; letter-spacing:0.06em;
             font-size:0.62rem; margin-right:7px; }
 .switch a { color:var(--fg3); text-decoration:none; border-bottom:1px solid var(--border);
             margin-right:10px; }
 .switch a:hover { color:var(--fg); border-color:var(--fg); }
-@media (max-width:640px) { .tabs { margin-left:0; } }
 CSSEOF
 }
 
 emit_nav_js() {
 cat <<'JSEOF'
 // renderNav({el, branch, slug, page, branches, up})
-//   page  : 'tests' | 'cleanliness'
+//   page  : 'tests' -- the one page per branch
 //   up    : relative prefix to the BRANCH root (always '../' today)
 //   branches: [{slug, name}] -- every branch with a published page
 //
-// TWO pages per branch, not three. The branch root used to serve a hub that
-// restated the figures already on the index card, and cost a click to reach
-// the page you actually wanted; it is a redirect to the board now. So the
-// branch is a LABEL here rather than a destination, and the tabs are the two
-// pages that exist.
-//
-// The switcher keeps the reader on the SAME page they are looking at. Jumping
-// to another branch's board when you were reading its metrics answers a
-// different question from the one they asked.
+// The branch root is a redirect to the board, so the branch is a LABEL here
+// rather than a destination. There is one page per branch, so no tabs.
 function renderNav(cfg) {
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -70,10 +52,7 @@ function renderNav(cfg) {
   }
   var up = cfg.up || '';
   var root = up + '../';
-  var PAGES = {
-    tests:       { label: 'Test results',     href: up + 'tests/' },
-    cleanliness: { label: 'Code cleanliness', href: up + 'code-cleanliness/' }
-  };
+  var PAGES = { tests: { label: 'Test results', href: up + 'tests/' } };
 
   var crumbs = '<a href="' + root + '">All branches</a>' +
                '<span class="car">/</span>' +
@@ -81,22 +60,17 @@ function renderNav(cfg) {
                '<span class="car">/</span>' +
                '<span class="here">' + esc((PAGES[cfg.page] || {}).label || '') + '</span>';
 
-  var tabs = Object.keys(PAGES).map(function (k) {
-    return '<a href="' + PAGES[k].href + '"' + (k === cfg.page ? ' class="on"' : '') +
-           '>' + esc(PAGES[k].label) + '</a>';
-  }).join('');
-
   var others = (cfg.branches || []).filter(function (b) { return b.slug !== cfg.slug; });
   var sw = '';
   if (others.length) {
-    var suffix = cfg.page === 'cleanliness' ? 'code-cleanliness/' : 'tests/';
+    var suffix = 'tests/';
     sw = '<div class="switch"><b>Same view on</b>' + others.map(function (b) {
       return '<a href="' + root + esc(b.slug) + '/' + suffix + '">' + esc(b.name || b.slug) + '</a>';
     }).join('') + '</div>';
   }
 
   document.getElementById(cfg.el).innerHTML =
-    '<div class="crumbs">' + crumbs + '</div><div class="tabs">' + tabs + '</div>' + sw;
+    '<div class="crumbs">' + crumbs + '</div>' + sw;
 }
 JSEOF
 }
@@ -125,16 +99,8 @@ PY
 # =============================================================================
 # Shared page HEADER.
 #
-# The board and the cleanliness page grew their own headers weeks apart and
-# ended up with different markup, different metadata and different type scales
-# for the same job. Two pages one click from each other should not look like
-# two products, and the repo measures its own duplication, so this is written
-# once and cat into both.
-#
-# The metadata is the same set everywhere -- branch, the suite commit, the
-# argus ref with its version and commit, the liveness note, the date -- because
-# "what produced this page" is the same question on both, and a reader should
-# not have to learn where each page happens to put it.
+# The board's header: branch, the suite commit, the argus ref with its version
+# and commit, the liveness note, the date -- "what produced this page".
 # =============================================================================
 
 emit_header_css() {
