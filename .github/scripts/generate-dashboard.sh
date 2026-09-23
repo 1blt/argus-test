@@ -1045,9 +1045,9 @@ __NAV_JS__
   // and the board reported PASS with tests failing -- the exact silent pass
   // this suite exists to catch, in the thing that reports it.
   const ORDER = Object.keys(W).sort(function (a, b) { return (W[b] || 0) - (W[a] || 0); });
-  const LBL = (FC && FC.labels) || { open: 'reports success anyway',
-                                     closed: 'refuses to run',
-                                     auxiliary: 'reporting broke' };
+  const LBL = (FC && FC.labels) || { open: 'fail-open',
+                                     closed: 'fail-closed',
+                                     auxiliary: 'auxiliary breakage' };
   const SHORT = (FC && FC.short) || LBL;
   const GLOSS = (FC && FC.glossary) || {};
   const REFS = (FC && FC.references) || [];
