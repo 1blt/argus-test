@@ -112,20 +112,6 @@ jobs:
           restore-keys: |
             scannerdb-${{ runner.os }}-
 
-      # TRIVY ONLY, DELIBERATELY.
-      #
-      # `grype db update` failed four retries with escalating backoff on this
-      # runner -- systematic, not flaky -- and with grype in the default set
-      # and its database unobtainable, argus refusing the scan is CORRECT. The
-      # test then had no verdict to give, twice.
-      #
-      # Removing grype does not weaken the assertion, it widens it. N1 says an
-      # unrequested sub-scanner that cannot run here must not fail the scan.
-      # With grype absent, the default set contains one sub-scanner that works
-      # (trivy), one that needs no database (syft), and three that cannot run
-      # (grype, exposure, services) -- so the rule is now tested against three
-      # unavailable sub-scanners instead of two, with no dependency on a 200MB
-      # download that this runner cannot complete.
       - name: Install trivy as a plain binary
         run: |
           set -euo pipefail
@@ -133,6 +119,43 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sh -s -- -b "$HOME/scanbin" v0.74.0
           "$HOME/scanbin/trivy" --version
+
+      # GRYPE IS A STUB, AND THAT IS NOT WHAT N1 IS ABOUT.
+      #
+      # The host ADR-039 protects is "trivy and grype installed as local
+      # binaries, no container runtime" (argus scan_image docstring). The
+      # degrade rule covers exposure and services only -- they report an
+      # absent precondition as {"skipped": ...}. A missing grype raises, and a
+      # default scan with no grype exits 2. That is argus being right, so grype
+      # has to be present for N1 to have a verdict.
+      #
+      # A real grype is not an option here: `grype db update` failed four
+      # retries with escalating backoff on this runner, systematic rather than
+      # flaky. An earlier version dropped grype instead, on the claim that this
+      # widened the assertion to three unavailable sub-scanners. It did not:
+      # grype is not degradable, so N1 could never pass.
+      #
+      # The stub answers argus's local-binary invocation
+      # (`grype <source>:<ref> -o json --file PATH`) with an empty, valid
+      # result and records each call, so the assertion can prove argus reached
+      # it. It says nothing about grype's findings; N1 does not ask about them.
+      - name: Install a grype stub
+        run: |
+          set -euo pipefail
+          cat > "$HOME/scanbin/grype" <<'STUB'
+          #!/bin/sh
+          echo "$*" >> "$HOME/grype-stub-calls.log"
+          case "$1" in version|--version) echo "grype stub (argus-test N1)"; exit 0 ;; esac
+          out=""
+          while [ $# -gt 0 ]; do
+            if [ "$1" = "--file" ]; then out="$2"; shift; fi
+            shift
+          done
+          if [ -n "$out" ]; then echo '{"matches":[]}' > "$out"; else echo '{"matches":[]}'; fi
+          STUB
+          chmod +x "$HOME/scanbin/grype"
+          "$HOME/scanbin/grype" --version
+          rm -f "$HOME/grype-stub-calls.log"
 
       # WARM THE DATABASES, WITH RETRIES. The preflight kept reporting "grype
       # cannot complete a scan (database unavailable?)" and the test recorded
@@ -200,6 +223,7 @@ jobs:
             echo "  $rt: absent (as required)"
           done
           echo "  trivy: $(command -v trivy)"
+          echo "  grype: $(command -v grype) (stub)"
 
           # PREFLIGHT. N1 asserts that sub-scanners the caller did NOT ask for
           # cannot fail the scan. That only means anything if at least one that
@@ -244,8 +268,12 @@ jobs:
           set -e
           tail -40 n1.log
 
-          if [ "$N1_RC" -ne 0 ]; then
-            echo "::error title=N1::A default container scan exited $N1_RC on a host where trivy works and grype, exposure and services cannot run. Sub-scanners the caller never asked for must not fail the scan (ADR-039): a rootless or hardened runner would fail every scan and the gate would be switched off. Expected 0."
+          if [ ! -s "$HOME/grype-stub-calls.log" ]; then
+            # Without this, a pass could mean argus never reached grype at
+            # all, and the host shape N1 claims to test was never exercised.
+            echo "::error title=N1::argus never invoked grype, so this was not the trivy-and-grype daemonless host N1 describes. The result says nothing about ADR-039."
+          elif [ "$N1_RC" -ne 0 ]; then
+            echo "::error title=N1::A default container scan exited $N1_RC on a host where trivy and grype work and exposure and services cannot run. Sub-scanners the caller never asked for must not fail the scan (ADR-039): a rootless or hardened runner would fail every scan and the gate would be switched off. Expected 0."
           elif ! grep -qiE '(exposure|services)' n1.log; then
             echo "::error title=N1::The scan exited 0, but neither 'exposure' nor 'services' is named in the output. They could not run here, and a reduced scan that does not say so is indistinguishable from a full one."
           else
