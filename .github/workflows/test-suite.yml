@@ -884,6 +884,11 @@ jobs:
           curl -sSfL "$site_url/$SLUG/history.json" -o "_site/$SLUG/history.json" 2>/dev/null \
             || echo '[]' > "_site/$SLUG/history.json"
           jq empty "_site/$SLUG/history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/history.json"
+          # The cleanliness page's history, same rules. generate-cleanliness-page.sh
+          # appends this run to it.
+          curl -sSfL "$site_url/$SLUG/cleanliness-history.json" -o "_site/$SLUG/cleanliness-history.json" 2>/dev/null \
+            || echo '[]' > "_site/$SLUG/cleanliness-history.json"
+          jq empty "_site/$SLUG/cleanliness-history.json" 2>/dev/null || echo '[]' > "_site/$SLUG/cleanliness-history.json"
           {
             echo "branch_dir=$SLUG"
             echo "branch_slug=$SLUG"
@@ -1017,6 +1022,7 @@ jobs:
         env:
           CLEAN_FILE: _site/liveness/cleanliness.json
           OUT_DIR: _site/${{ env.branch_dir }}/code-cleanliness
+          CLEAN_HISTORY_FILE: _site/${{ env.branch_dir }}/cleanliness-history.json
           BRANCH: ${{ env.branch_name }}
           ARGUS_REPO: ${{ steps.argus-ref.outputs.argus_repo }}
           ARGUS_REF: ${{ steps.argus-ref.outputs.argus_ref }}
@@ -1072,7 +1078,7 @@ jobs:
             [ "$SLUG" = "$MINE" ] && continue
             mkdir -p "_site/$SLUG/tests" "_site/$SLUG/code-cleanliness"
             GOT=0
-            for f in index.html history.json cleanliness.json favicon.png \
+            for f in index.html history.json cleanliness.json cleanliness-history.json favicon.png \
                      tests/index.html code-cleanliness/index.html; do
               # -L for the same reason as everywhere else: without it a custom
               # domain's 301 body gets written into the file and counted as a

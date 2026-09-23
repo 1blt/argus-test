@@ -35,6 +35,44 @@ CLEAN_JSON=$(jq -c '.' "$CLEAN_FILE")
 CFG_JSON=$(jq -c '{targets, metrics, references}' "$CLEAN_CFG_FILE")
 DATE_STR="${DATE_STR:-$(date -u '+%Y-%m-%d %H:%M UTC')}"
 
+# ---------- history ----------
+# The headline figure of each metric, one entry per run, so the page can show
+# which way they are moving rather than only where they are. Lives beside the
+# board's history.json in the branch directory; CI fetches the published copy
+# before this runs, exactly as it does for that file.
+#
+# A metric that was not measured is recorded as null, never 0. Plotted, a null
+# is a break in the line: a run where the detector failed must not read as the
+# run where the code got clean.
+HISTORY_FILE="${CLEAN_HISTORY_FILE:-$OUT_DIR/../cleanliness-history.json}"
+if [ ! -f "$HISTORY_FILE" ] || ! jq -e 'type == "array"' "$HISTORY_FILE" >/dev/null 2>&1; then
+  echo '[]' > "$HISTORY_FILE"
+fi
+CURRENT_RUN=$(jq -c \
+  --arg date "$DATE_STR" \
+  --arg self_sha "${SELF_SHA:-}" \
+  --arg argus_sha "${ARGUS_SHA:-}" \
+  --arg url "${RUN_URL:-}" '
+  def ok(m): (m | type) == "object" and (m.error | not);
+  def pick(t): {
+    duplication: (if ok(t.duplication) and t.duplication.percent != null
+                  then (t.duplication.percent * 10 | round) / 10 else null end),
+    cognitive:   (if ok(t.cognitive) then t.cognitive.worst else null end)
+  };
+  (.targets // {}) as $t
+  | {date:$date, self_sha:$self_sha, argus_sha:$argus_sha, url:$url,
+     suite: (pick($t.suite) + {tuples: (if ok($t.suite.tuple_dupes)
+               then (($t.suite.tuple_dupes.exact_rows // 0) + ($t.suite.tuple_dupes.invocation_rows // 0))
+               else null end)}),
+     argus: pick($t.argus)}' "$CLEAN_FILE")
+# A re-run of the same workflow run replaces its entry instead of adding one.
+jq -c --argjson run "$CURRENT_RUN" \
+  'map(select($run.url == "" or .url != $run.url)) + [$run] | .[-20:]' \
+  "$HISTORY_FILE" > "$HISTORY_FILE.tmp"
+mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
+HIST_JSON=$(jq -c '.' "$HISTORY_FILE")
+echo "Cleanliness history entries: $(jq 'length' "$HISTORY_FILE")"
+
 cat > "$OUT_DIR/index.html" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -197,6 +235,29 @@ td.k { color:var(--fg); font-weight:600; white-space:nowrap; }
 .ref { display:flex; gap:10px; font-size:0.73rem; color:var(--fg3); padding:7px 0; border-bottom:1px solid var(--rule); }
 .ref .n { font-weight:700; color:var(--fg2); flex:0 0 auto; }
 .ref .why { display:block; color:var(--fg3); font-style:italic; margin-top:2px; }
+/* Trends: the same drawing as the board's risk and pass-rate plots, one small
+   plot per metric. Monochrome for the same reason the board's are -- colour
+   on this page belongs to the clone diffs. */
+.trends { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px 22px;
+          margin:14px 0 6px; }
+.trend-head { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+.trend-head > span:first-child { text-transform:uppercase; letter-spacing:var(--track); font-weight:600;
+                                 font-size:0.64rem; color:var(--fg3); }
+.trend-delta { font-size:0.68rem; color:var(--fg3); font-variant-numeric:tabular-nums; }
+.trend-svg { width:100%; height:92px; display:block; overflow:visible; }
+.ax-grid { stroke:var(--rule); stroke-width:1; }
+.ax-lbl { font-size:9px; fill:var(--fg3); font-family:inherit; letter-spacing:0.04em; }
+.pt-lbl { font-size:9px; font-weight:600; fill:var(--fg3); font-family:inherit; }
+.pt-lbl.last { font-weight:700; fill:var(--fg); }
+.trend-area { fill:var(--fg3); opacity:0.12; }
+.trend-line { fill:none; stroke:var(--fg2); stroke-width:1.5; }
+.trend-dot { fill:var(--fg2); }
+.trend-dot.last { fill:var(--fg); }
+/* An unmeasured run: a hollow mark on the baseline, never a point at zero. */
+.trend-gap { fill:var(--bg); stroke:var(--warn-ink); stroke-width:1.2; }
+.trend-hit { fill:transparent; cursor:pointer; }
+.tip { position:absolute; display:none; background:var(--fg); color:var(--bg); padding:7px 10px;
+       font-size:0.7rem; pointer-events:none; z-index:50; white-space:nowrap; }
 footer { margin-top:44px; padding-top:18px; border-top:1px solid var(--border);
          font-size:0.72rem; color:var(--fg3); }
 @media (max-width:640px) { .grid { grid-template-columns:1fr; } .wrap { padding:28px 16px 48px; } }
@@ -211,12 +272,14 @@ footer { margin-top:44px; padding-top:18px; border-top:1px solid var(--border);
   <div id="body"></div>
   <footer id="foot"></footer>
 </div>
+<div class="tip" id="tip"></div>
 <script>
 HTMLEOF
 
 {
   echo "const CLEAN = $CLEAN_JSON;"
   echo "const CFG = $CFG_JSON;"
+  echo "const HIST = $HIST_JSON;"
   echo "const PAGE = {"
   echo "  date: \"${DATE_STR}\","
   echo "  branch: \"${BRANCH:-}\","
@@ -299,6 +362,128 @@ __NAV_JS__
   };
   function says(k) { return '<div class="whatis">' + WHAT[k] + '</div>'; }
 
+  // ---- trends ---------------------------------------------------------------
+  // Which metrics each target plots. Tuples are a property of the suite's
+  // matrices; argus has none, so it gets no empty plot for them.
+  var TRENDS = {
+    suite: [['duplication', 'Duplicated lines', '%'], ['cognitive', 'Worst unit', ''],
+            ['tuples', 'Unexplained tuples', '']],
+    argus: [['duplication', 'Duplicated lines', '%'], ['cognitive', 'Worst unit', '']]
+  };
+  function valOf(p, key, m) { var t = p[key]; return t && typeof t[m] === 'number' ? t[m] : null; }
+  function fmt(v, m) { return m === 'duplication' ? v.toFixed(1) : String(v); }
+
+  // The delta is against the previous run that MEASURED this metric. Against
+  // an unmeasured one there is nothing to subtract, and skipping it silently
+  // would still be a delta across the gap -- so the text says how far back.
+  function delta(key, m, unit) {
+    var got = [];
+    for (var i = HIST.length - 1; i >= 0 && got.length < 2; i--) {
+      var v = valOf(HIST[i], key, m);
+      if (v !== null) got.push({ v: v, i: i });
+    }
+    if (valOf(HIST[HIST.length - 1] || {}, key, m) === null) return 'not measured this run';
+    if (got.length < 2) return '';
+    var d = got[0].v - got[1].v, back = got[0].i - got[1].i;
+    var s = d === 0 ? 'no change' : (d > 0 ? '+' : '−') + fmt(Math.abs(d), m) + unit;
+    return s + (back > 1 ? ' vs ' + back + ' runs ago' : ' vs last run');
+  }
+
+  function trendRow(key) {
+    return '<div class="trends">' + TRENDS[key].map(function (t) {
+      return '<div><div class="trend-head"><span>' + esc(t[1]) + '</span>' +
+             '<span class="trend-delta">' + esc(delta(key, t[0], t[2])) + '</span></div>' +
+             '<svg class="trend-svg" data-t="' + key + '" data-m="' + t[0] + '"></svg></div>';
+    }).join('') + '</div>';
+  }
+
+  function niceMax(v) {
+    if (v <= 5) return 5;
+    var mag = Math.pow(10, Math.floor(Math.log10(v)));
+    return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map(function (x) { return x * mag; })
+      .filter(function (c) { return c >= v; })[0] || 10 * mag;
+  }
+
+  // The board's drawSeries, less what does not apply here (verdict dots), plus
+  // gaps: x is the run's position in the history, so an unmeasured run keeps
+  // its slot and the line breaks across it instead of joining its neighbours.
+  function drawTrend(svg) {
+    var key = svg.dataset.t, m = svg.dataset.m, tip = $('tip');
+    var vals = HIST.map(function (p) { return valOf(p, key, m); });
+    var measured = vals.filter(function (v) { return v !== null; });
+    if (HIST.length < 2 || measured.length < 1) {
+      svg.innerHTML = '<text x="0" y="30" class="ax-lbl">' +
+        (HIST.length < 2 ? 'Not enough runs yet' : 'Never measured') + '</text>';
+      return;
+    }
+    var box = svg.getBoundingClientRect();
+    var W = Math.round(box.width || 300), H = Math.round(box.height || 92);
+    var padL = 30, padR = 10, padT = 14, padB = 18;
+    var plotW = W - padL - padR, plotH = H - padT - padB, n = HIST.length;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    var top = niceMax(Math.max.apply(null, measured.concat([1])));
+    function xs(i) { return padL + i * (plotW / (n - 1)); }
+    function ys(v) { return padT + plotH - (v / top) * plotH; }
+    var g = '';
+    [0, top / 2, top].forEach(function (v) {
+      g += '<line class="ax-grid" x1="' + padL + '" y1="' + ys(v) + '" x2="' + (W - padR) +
+           '" y2="' + ys(v) + '"/><text class="ax-lbl" x="' + (padL - 6) + '" y="' + (ys(v) + 3) +
+           '" text-anchor="end">' + (top <= 5 && v % 1 ? v.toFixed(1) : Math.round(v)) + '</text>';
+    });
+    [0, Math.floor((n - 1) / 2), n - 1].filter(function (v, i, a) { return a.indexOf(v) === i; })
+      .forEach(function (i) {
+        var anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+        g += '<text class="ax-lbl" x="' + xs(i) + '" y="' + (H - 4) + '" text-anchor="' + anchor + '">' +
+             esc(String(HIST[i].date || '').split(' ')[0].slice(5)) + '</text>';
+      });
+    // One path per unbroken run of measured points.
+    var runs = [], cur = [];
+    vals.forEach(function (v, i) {
+      if (v === null) { if (cur.length) runs.push(cur); cur = []; } else cur.push(i);
+    });
+    if (cur.length) runs.push(cur);
+    runs.forEach(function (r) {
+      var line = '', area = 'M' + xs(r[0]) + ',' + (padT + plotH);
+      r.forEach(function (i, j) {
+        line += (j ? ' L' : 'M') + xs(i) + ',' + ys(vals[i]);
+        area += ' L' + xs(i) + ',' + ys(vals[i]);
+      });
+      area += ' L' + xs(r[r.length - 1]) + ',' + (padT + plotH) + ' Z';
+      g += '<path class="trend-area" d="' + area + '"/><path class="trend-line" d="' + line + '"/>';
+      if (r.length === 1) g += '<circle class="trend-dot" cx="' + xs(r[0]) + '" cy="' + ys(vals[r[0]]) + '" r="2.4"/>';
+    });
+    vals.forEach(function (v, i) {
+      if (v === null) g += '<circle class="trend-gap" cx="' + xs(i) + '" cy="' + (padT + plotH) + '" r="2.6"/>';
+    });
+    var last = n - 1;
+    if (vals[last] !== null) {
+      g += '<circle class="trend-dot last" cx="' + xs(last) + '" cy="' + ys(vals[last]) + '" r="3"/>' +
+           '<text class="pt-lbl last" x="' + xs(last) + '" y="' + (ys(vals[last]) - 5 > padT + 6 ?
+           ys(vals[last]) - 5 : ys(vals[last]) + 11) + '" text-anchor="end">' + fmt(vals[last], m) + '</text>';
+    }
+    var bw = plotW / (n - 1);
+    HIST.forEach(function (p, i) {
+      g += '<rect class="trend-hit" x="' + (xs(i) - bw / 2) + '" y="0" width="' + bw +
+           '" height="' + H + '" data-i="' + i + '"/>';
+    });
+    svg.innerHTML = g;
+    svg.querySelectorAll('.trend-hit').forEach(function (r) {
+      var p = HIST[+r.dataset.i], v = vals[+r.dataset.i];
+      r.addEventListener('mouseenter', function (e) {
+        var sha = key === 'argus' ? p.argus_sha : p.self_sha;
+        tip.innerHTML = '<b>' + esc(p.date) + '</b><br>' +
+          (v === null ? 'not measured' : esc(fmt(v, m))) +
+          (sha ? ' &middot; <span class="mono">' + esc(String(sha).slice(0, 7)) + '</span>' : '');
+        tip.style.display = 'block';
+        tip.style.left = (e.clientX + window.scrollX + 12) + 'px';
+        tip.style.top = (e.clientY + window.scrollY - 44) + 'px';
+      });
+      r.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+      if (p.url) r.addEventListener('click', function () { window.open(p.url, '_blank'); });
+    });
+  }
+
   function fault(what, why) {
     return '<div class="fault"><span class="flabel">Not measured</span> ' +
            esc(what) + ' &mdash; ' + esc(why) +
@@ -309,6 +494,7 @@ __NAV_JS__
     var t = (CLEAN.targets || {})[key], cfg = (CFG.targets || {})[key];
     if (!t || !cfg) return;
     html += '<h2>' + esc(cfg.label) + '</h2>';
+    html += trendRow(key);
 
     // ---- duplication ------------------------------------------------------
     var d = t.duplication;
@@ -526,6 +712,18 @@ __NAV_JS__
       }).join('') + '</div>';
 
   $('body').innerHTML = html;
+
+  // Draw after layout, and again whenever a plot's box changes size -- the
+  // board found that measuring once at init read a width before layout had
+  // settled and the drawing came out scaled.
+  var plots = Array.prototype.slice.call(document.querySelectorAll('.trend-svg'));
+  plots.forEach(drawTrend);
+  if (typeof ResizeObserver === 'function') {
+    var ro = new ResizeObserver(function (es) { es.forEach(function (e) { drawTrend(e.target); }); });
+    plots.forEach(function (s) { ro.observe(s); });
+  } else {
+    window.addEventListener('resize', function () { plots.forEach(drawTrend); });
+  }
   $('foot').innerHTML =
     'Measured by <span class="mono">.github/scripts/cleanliness-metrics.sh</span> on every run. ' +
     '<a href="../../">All branches</a> &middot; <a href="../tests/">Test results</a>.';
