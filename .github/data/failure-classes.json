@@ -48,14 +48,14 @@
     "auxiliary": 1
   },
   "labels": {
-    "open": "reports success anyway",
-    "closed": "refuses to run",
-    "auxiliary": "reporting broke"
+    "open": "fail-open",
+    "closed": "fail-closed",
+    "auxiliary": "auxiliary breakage"
   },
   "short": {
-    "open": "reports success anyway",
-    "closed": "refuses to run",
-    "auxiliary": "reporting broke"
+    "open": "fail-open",
+    "closed": "fail-closed",
+    "auxiliary": "auxiliary"
   },
   "glossary": {
     "open": "argus reported success without actually running the check. Nothing warns you, so unscanned code can ship looking approved.",
