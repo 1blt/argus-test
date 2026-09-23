@@ -136,6 +136,7 @@ CATEGORIES=$(jq -n -c \
   --arg i3s "$(cat_status "$I3_RESULT")" \
   --arg i4s "$(cat_status "${I4_RESULT:-skipped}")" \
   --arg i5s "$(cat_status "${I5_RESULT:-skipped}")" \
+  --arg i6s "$(cat_status "${I6_RESULT:-skipped}")" \
   --arg i4s "$(cat_status "${I4_RESULT:-skipped}")" \
   --argjson u "$UNIT_JSON" \
   --argjson a "$ACTIONS_JSON" \
@@ -162,7 +163,8 @@ CATEGORIES=$(jq -n -c \
     {name:"No Hardcoded URLs (I2)",     status:$i2s,tests:[$ig[1]]},
     {name:"Config-Driven Scan (I3)",    status:$i3s,tests:[$ig[2]]},
     {name:"Dispatch Targets (I4)",      status:$i4s,tests:[$ig[3]]},
-    {name:"Infrastructure Scan (I5)",   status:$i5s,tests:[$ig[4]]}
+    {name:"Infrastructure Scan (I5)",   status:$i5s,tests:[$ig[4]]},
+    {name:"No Duplicate Tests (I6)",    status:$i6s,tests:[$ig[5]]}
   ]
   # Indexing a short REGRESSION_JSON yields nulls, which reach the browser as
   # `null` entries and throw on the first property access -- the whole board

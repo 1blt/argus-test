@@ -431,6 +431,25 @@ jobs:
           exit "$RC"
 
   # ==========================================================================
+  # I6: no two matrix rows describe the same test
+  #
+  # A row identical to another once id and name are stripped is one test
+  # counted twice: it adds nothing and inflates the pass-rate denominator. PR
+  # #13 removed six by hand. A deliberate same-invocation pair is annotated
+  # with `# dry:allow <reason>` above the row. Like I4, this checks the suite
+  # rather than argus, and it fails closed: finding no rows at all is a failure.
+  # ==========================================================================
+  i6-no-duplicate-tests:
+    name: "I6: no duplicate test tuples"
+    if: inputs.scope == 'all' || inputs.scope == 'regression' || github.event_name == 'schedule' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: No two matrix rows are the same test
+        run: python3 .github/scripts/check-duplicate-tuples.py .github/workflows
+
+  # ==========================================================================
   # I3: Config-driven container scan regression
   # ==========================================================================
   i3-config-scan:
@@ -475,6 +494,7 @@ jobs:
       - i3-config-scan
       - i1-happy-path
       - i4-dispatch-targets-cover-refs
+      - i6-no-duplicate-tests
       - runtime-env-tests
     if: always()
     # No `environment:` here. The github-pages environment restricts deployment
@@ -501,9 +521,10 @@ jobs:
           R12: ${{ needs.i3-config-scan.result }}
           R13: ${{ needs.i4-dispatch-targets-cover-refs.result }}
           R14: ${{ needs.i5-infrastructure-scan.result }}
+          R15: ${{ needs.i6-no-duplicate-tests.result }}
         run: |
           set -uo pipefail
-          ALL="$R1 $R2 $R3 $R4 $R5 $R6 $R7 $R8 $R9 $R10 $R11 $R12 $R13 $R14"
+          ALL="$R1 $R2 $R3 $R4 $R5 $R6 $R7 $R8 $R9 $R10 $R11 $R12 $R13 $R14 $R15"
           echo "category results: $ALL"
           if printf '%s' "$ALL" | grep -qw "cancelled"; then
             echo "complete=false" >> "$GITHUB_OUTPUT"
@@ -537,6 +558,7 @@ jobs:
           I3: ${{ needs.i3-config-scan.result }}
           I4: ${{ needs.i4-dispatch-targets-cover-refs.result }}
           I5: ${{ needs.i5-infrastructure-scan.result }}
+          I6: ${{ needs.i6-no-duplicate-tests.result }}
           SCOPE: ${{ inputs.scope || 'all' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -585,18 +607,21 @@ jobs:
           I3_STATUS=$(to_status "$I3")
           I4_STATUS=$(to_status "$I4")
           I5_STATUS=$(to_status "$I5")
+          I6_STATUS=$(to_status "$I6")
           REGRESSION_ARR=$(jq -n -c \
             --arg i1 "$I1_STATUS" \
             --arg i2 "$I2_STATUS" \
             --arg i3 "$I3_STATUS" \
             --arg i4 "$I4_STATUS" \
             --arg i5 "$I5_STATUS" \
+            --arg i6 "$I6_STATUS" \
             '[
               {"id":"I1","name":"happy path","detail":"Does argus work for a happy path workflow? The ordinary documented use with nothing adversarial in it: a clean image, the default scanner set and a realistic severity gate. Green only counts if an image was actually scanned, so it also requires images_scanned of at least 1 and an overall_status of success.","status":$i1},
               {"id":"I2","name":"no hardcoded URLs","detail":"Are the container action shell scripts still free of hardcoded github.com URLs?","status":$i2},
               {"id":"I3","name":"config-driven scan","detail":"Does the container-scan-from-config reusable workflow still scan the containers named in a config file?","status":$i3},
               {"id":"I4","name":"dispatch targets cover every ref","detail":"Does every argus ref this suite can be pointed at have a matching job in all four dispatch targets, so a run cannot report a pass for a ref nothing called?","status":$i4},
-              {"id":"I5","name":"infrastructure-scan regression","detail":"Does the infrastructure-scan reusable workflow still complete a trivy-iac and checkov run?","status":$i5}
+              {"id":"I5","name":"infrastructure-scan regression","detail":"Does the infrastructure-scan reusable workflow still complete a trivy-iac and checkov run?","status":$i5},
+              {"id":"I6","name":"no duplicate test tuples","detail":"Is every matrix row a distinct test, so none is counted twice in the pass rate? Rows identical once id and name are removed fail unless annotated with a dry:allow reason.","status":$i6}
             ]')
 
           # Merge all into one array
@@ -686,6 +711,7 @@ jobs:
             echo "| $(cat_icon "$I3") | Config-Driven Scan (I3) | 1 | $([ "$I3_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo "| $(cat_icon "$I4") | Dispatch Targets (I4) | 1 | $([ "$I4_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo "| $(cat_icon "$I5") | Infrastructure Scan (I5) | 1 | $([ "$I5_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
+            echo "| $(cat_icon "$I6") | No Duplicate Tests (I6) | 1 | $([ "$I6_STATUS" = "pass" ] && echo "1" || echo "0")/1 |"
             echo ""
             echo "---"
             echo ""
@@ -790,9 +816,10 @@ jobs:
           I1: ${{ needs.i1-happy-path.result }}
           I2: ${{ needs.i2-no-hardcoded-urls.result }}
           I3: ${{ needs.i3-config-scan.result }}
+          I6: ${{ needs.i6-no-duplicate-tests.result }}
         run: |
           FAILED=0
-          for result in "$UNIT" "$ACTIONS" "$REMOTE" "$DISCOVER" "$COMBO" "$EDGE" "$WF" "$SCN" "$I1" "$I2" "$I3"; do
+          for result in "$UNIT" "$ACTIONS" "$REMOTE" "$DISCOVER" "$COMBO" "$EDGE" "$WF" "$SCN" "$I1" "$I2" "$I3" "$I6"; do
             [ "$result" = "failure" ] && FAILED=$((FAILED + 1))
           done
 
@@ -984,6 +1011,7 @@ jobs:
           I3_RESULT: ${{ needs.i3-config-scan.result }}
           I4_RESULT: ${{ needs.i4-dispatch-targets-cover-refs.result }}
           I5_RESULT: ${{ needs.i5-infrastructure-scan.result }}
+          I6_RESULT: ${{ needs.i6-no-duplicate-tests.result }}
           RUNTIME_JSON: ${{ needs.runtime-env-tests.outputs.results }}
           RUNTIME_RESULT: ${{ needs.runtime-env-tests.result }}
           SCOPE: ${{ inputs.scope || 'all' }}
